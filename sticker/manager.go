@@ -3,7 +3,12 @@ package sticker
 import (
 	"errors"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -199,11 +204,102 @@ func (m *Manager) update() error {
 type AddStickerResult int
 
 const (
-	AddStickerNotYetImplErr AddStickerResult = iota
+	AddStickerSuccess AddStickerResult = iota
+	AddStickerInvalidPathErr
+	AddStickerAlreadyExistsErr
+	AddStickerHeadErr
+	AddStickerUnsupportContentErr
+	AddStickerInvalidSizeErr
+	AddStickerImageTooLargeErr
+	AddStickerInternalErr
+)
+
+const (
+	AddStickerSizeLimit = 3500000
 )
 
 func (m *Manager) AddSticker(path, url string) (retRes AddStickerResult) {
-	return AddStickerNotYetImplErr
+	idSplitted := strings.Split(path, "/")
+	if len(idSplitted) != 2 || idSplitted[0] == "" || idSplitted[1] == "" {
+		return AddStickerInvalidPathErr
+	}
+	groupName := idSplitted[0]
+	stickerName := idSplitted[1]
+
+	if ss := m.MatchedStickers(path); len(ss) != 0 {
+		return AddStickerAlreadyExistsErr
+	}
+
+	resp, err := http.Head(url)
+	if err != nil {
+		log.Printf("Failed to HEAD URL=%q: %v\n", url, err)
+		return AddStickerHeadErr
+	}
+
+	ctype := resp.Header.Get("Content-Type")
+	switch ctype {
+	case "image/png", "image/jpeg", "image/gif":
+		// Valid types. Nothing to do.
+	default:
+		return AddStickerUnsupportContentErr
+	}
+
+	size, err := strconv.Atoi(resp.Header.Get("Content-Length"))
+	if err != nil {
+		log.Println("Failed to convert the content length to integer:", err)
+		return AddStickerInvalidSizeErr
+	}
+	if size > AddStickerSizeLimit {
+		return AddStickerImageTooLargeErr
+	}
+
+	resp, err = http.Get(url)
+	if err != nil {
+		log.Printf("Failed to GET URL=%q: %v\n", url, err)
+		return AddStickerInternalErr
+	}
+	defer resp.Body.Close()
+
+	dirPath := filepath.Join(m.root, groupName)
+	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+		if err := os.Mkdir(dirPath, 0755); err != nil {
+			log.Println("Failed to create new directory:", err)
+			return AddStickerInternalErr
+		}
+		defer func() {
+			if retRes != AddStickerSuccess {
+				os.Remove(dirPath)
+			}
+		}()
+	}
+
+	ext := ctype[len("image/"):]
+	imgPath := filepath.Join(dirPath, stickerName+"."+ext)
+	w, err := os.Create(imgPath)
+	if err != nil {
+		log.Println("Failed to create a new file:", err)
+		return AddStickerInternalErr
+	}
+	defer func() {
+		if retRes != AddStickerSuccess {
+			os.Remove(imgPath)
+		}
+	}()
+	defer w.Close()
+
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		log.Println("Failed to write the image:", err)
+		return AddStickerInternalErr
+	}
+
+	w.Close()
+
+	if err := m.update(); err != nil {
+		log.Println("Failed to update sticker info:", err)
+		return AddStickerInternalErr
+	}
+
+	return AddStickerSuccess
 }
 
 type RenameStickerResult int

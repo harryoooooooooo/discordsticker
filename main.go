@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -137,8 +138,24 @@ func handleAdd(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Man
 	}
 
 	switch res := sm.AddSticker(command[0], command[1]); res {
-	case sticker.AddStickerNotYetImplErr:
-		replyNormal(s, m, "Not yet implemented!")
+	case sticker.AddStickerSuccess:
+		replyNormal(s, m, "Done.")
+	case sticker.AddStickerInvalidPathErr:
+		replyNormal(s, m, "Invalid path. Expect `<group_name>/<sticker_name>`. Try again!")
+	case sticker.AddStickerAlreadyExistsErr:
+		stickers := sm.MatchedStickers(command[0])
+		matchedStr := multiMatchedStr(stickers, strings.Contains(command[0], "/"))
+		replyNormal(s, m, "The name has already matched the following stickers: "+matchedStr+". Try again!")
+	case sticker.AddStickerHeadErr:
+		replyNormal(s, m, "Failed to download the image! Is it a valid URL?")
+	case sticker.AddStickerUnsupportContentErr:
+		replyNormal(s, m, "Invalid URL content type! Only png, jpeg, and gif are supported.")
+	case sticker.AddStickerInvalidSizeErr:
+		replyNormal(s, m, "Invalid data from the URL!")
+	case sticker.AddStickerImageTooLargeErr:
+		replyNormal(s, m, fmt.Sprintf("Image size too large! Expect < %dB.", sticker.AddStickerSizeLimit))
+	case sticker.AddStickerInternalErr:
+		replyNormal(s, m, "Something goes wrong here! Please contact the admin.")
 	}
 }
 
@@ -201,7 +218,7 @@ func userHelp(commandPrefix string) string {
 		"If `<group_name>` is not given, list all directory (group) names; Otherwise, list all stickers inside `<group_name>`.",
 	}, {
 		"add <full_path> <URL>",
-		"**[Not yet implemented]** Download and save the image at `<URL>` as a new sticker. Note that a full path should includes full directory name as well as full file name (file extension attached).",
+		"Download and save the image at `<URL>` as a new sticker. Note that a full path should includes full directory name as well as full file name (file extension attached).",
 	}, {
 		"rename <org_full_path> <new_full_path>",
 		"**[Not yet implemented]** Move the sticker on `<org_full_path>` to `<new_full_path>`. Note that a full path should includes full directory name as well as full file name (file extension attached).",
