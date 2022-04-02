@@ -149,6 +149,15 @@ func countUniqLenTwo(a, b string) int {
 	return i
 }
 
+type countUniqLenError struct {
+	str1 string
+	str2 string
+}
+
+func (e *countUniqLenError) Error() string {
+	return fmt.Sprintf("Found contained strings: %q vs %q", e.str1, e.str2)
+}
+
 // countUniqLen finds the unique prefix length among the whole slice for all strings.
 // An unique prefix means there is no other string has the same prefix.
 func countUniqLen(strs []string) ([]int, error) {
@@ -158,7 +167,7 @@ func countUniqLen(strs []string) ([]int, error) {
 			s := strs[i]
 			t := strs[j]
 			if s == t || strings.HasPrefix(s, t) || strings.HasPrefix(t, s) {
-				return nil, errors.New("Found contained/same strings: " + s + " vs " + t)
+				return nil, &countUniqLenError{str1: s, str2: t}
 			}
 			l := countUniqLenTwo(s, t) + 1
 			if ret[i] < l {
@@ -334,6 +343,9 @@ func (m *Manager) AddSticker(path, url string) (retErr error) {
 	w.Close()
 
 	if err := m.update(); err != nil {
+		if _, ok := err.(*countUniqLenError); ok {
+			return fmt.Errorf("The new sticker path cover the existing sticker path: %w", err)
+		}
 		log.Println("Failed to update sticker info:", err)
 		return UninformableErr
 	}
@@ -415,6 +427,9 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 	}
 
 	if err := m.update(); err != nil {
+		if _, ok := err.(*countUniqLenError); ok {
+			return fmt.Errorf("The new sticker path cover the existing sticker path: %w", err)
+		}
 		log.Println("Failed to update sticker info:", err)
 		return UninformableErr
 	}
