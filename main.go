@@ -123,11 +123,20 @@ func handleRename(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.
 	defer sm.Unlock()
 
 	if len(command) != 2 {
-		replyNormal(s, m, "Invalid format. Expect `"+commandPrefix+"rename <org_full_path> <new_full_path>. Try again!`")
+		replyNormal(s, m, "Invalid format. Expect `"+commandPrefix+"rename <sticker_name> <new_full_path>. Try again!`")
 		return
 	}
 
-	replyNormal(s, m, "Not yet implemented!")
+	if err := sm.RenameSticker(command[0], command[1]); err != nil {
+		if err != sticker.UninformableErr {
+			replyNormal(s, m, err.Error())
+		} else {
+			replyNormal(s, m, "Something goes wrong here! Please contact the admin.")
+		}
+		return
+	}
+
+	replyNormal(s, m, "Done!")
 }
 
 func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, stickerID string) {
@@ -162,7 +171,9 @@ func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker
 
 func userHelp(commandPrefix string) string {
 	sb := strings.Builder{}
-	sb.WriteString("Please send commands with the prefix `%[1]s`. Available commands:\n\n")
+	sb.WriteString("Please send commands with the prefix `")
+	sb.WriteString(commandPrefix)
+	sb.WriteString("`. Available commands:\n\n")
 	for _, t := range []struct {
 		command string
 		desc    string
@@ -174,13 +185,13 @@ func userHelp(commandPrefix string) string {
 		"If `<group_name>` is not given, list all directory (group) names; Otherwise, list all stickers inside `<group_name>`.",
 	}, {
 		"add <full_path> <URL>",
-		"Download and save the image at `<URL>` as a new sticker. Note that a full path should includes full directory name as well as full file name (file extension attached).",
+		"Download and save the image at `<URL>` as a new sticker. Note that a full path should includes directory name.",
 	}, {
-		"rename <org_full_path> <new_full_path>",
-		"**[Not yet implemented]** Move the sticker on `<org_full_path>` to `<new_full_path>`. Note that a full path should includes full directory name as well as full file name (file extension attached).",
+		"rename <sticker_name> <new_full_path>",
+		"Move the sticker on `<sticker_name>` to `<new_full_path>`. Note that a full path should includes directory name.",
 	}, {
 		"<sticker_name>",
-		"A command that does not match any of the above is considered a sticker name. Use `%[1]slist` to view the available stickers.",
+		"A command that does not match any of the above is considered a sticker name. Use `" + commandPrefix + "list` to view the available stickers.",
 	}} {
 		sb.WriteString("`")
 		sb.WriteString(commandPrefix)

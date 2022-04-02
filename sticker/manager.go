@@ -341,8 +341,85 @@ func (m *Manager) AddSticker(path, url string) (retErr error) {
 	return nil
 }
 
+// RenameSticker renames the sticker
+// UninformableErr is returned when there is an internal error occurs;
+// Otherwise there is probably an error caused by user and the error object may cantain advice if any.
 func (m *Manager) RenameSticker(src, dst string) (retErr error) {
-	return UninformableErr
+	srcMatched := m.MatchedStickers(src)
+	if len(srcMatched) < 1 {
+		return errors.New("Sticker not found.")
+	}
+	if len(srcMatched) > 1 {
+		matchedStr := StickerListString(srcMatched, strings.Contains(src, "/"))
+		return errors.New("Found more than one stickers. Matched: " + matchedStr)
+	}
+
+	dstSplitted := strings.Split(dst, "/")
+	if len(dstSplitted) != 2 || dstSplitted[0] == "" || dstSplitted[1] == "" {
+		return errors.New("Invalid path. Expect `<group_name>/<sticker_name>` but got `" + dst + "`")
+	}
+
+	dstMatched := m.MatchedStickers(dst)
+	if len(dstMatched) > 1 || (len(dstMatched) == 1 && dstMatched[0] != srcMatched[0]) {
+		return errors.New("The new path already matched existing stickers: " + StickerListString(dstMatched, true))
+	}
+
+	dstDir := filepath.Join(m.root, dstSplitted[0])
+	if _, err := os.Stat(dstDir); os.IsNotExist(err) {
+		if err := os.Mkdir(dstDir, 0755); err != nil {
+			log.Println("Failed to create new directory:", err)
+			return UninformableErr
+		}
+		defer func() {
+			if retErr != nil {
+				if err := os.Remove(dstDir); err != nil {
+					log.Println("Failed to remove the newly created directory:", err)
+				}
+			}
+		}()
+	}
+
+	srcPath := srcMatched[0].Path()
+	dstPath := filepath.Join(m.root, dst+"."+srcMatched[0].Ext())
+	if err := os.Rename(srcPath, dstPath); err != nil {
+		log.Println("Failed to move the image:", err)
+		return UninformableErr
+	}
+	defer func() {
+		if retErr != nil {
+			if err := os.Rename(dstPath, srcPath); err != nil {
+				log.Println("Failed to remove the image back:", err)
+			}
+		}
+	}()
+
+	srcDir := srcMatched[0].group.Path()
+	dirsPath, err := filepath.Glob(filepath.Join(srcDir, "*"))
+	if err != nil {
+		log.Println("Failed to count the file number in the source directory:", err)
+		return UninformableErr
+	}
+	if len(dirsPath) == 0 {
+		// Remove the directory if the group becomes empty.
+		if err := os.Remove(srcDir); err != nil {
+			log.Println("Failed to remove the directory:", err)
+			return UninformableErr
+		}
+		defer func() {
+			if retErr != nil {
+				if err := os.Mkdir(srcDir, 0755); err != nil {
+					log.Println("Failed to create the source directory back:", err)
+				}
+			}
+		}()
+	}
+
+	if err := m.update(); err != nil {
+		log.Println("Failed to update sticker info:", err)
+		return UninformableErr
+	}
+
+	return nil
 }
 
 func (m *Manager) MatchedStickers(id string) []*Sticker {
