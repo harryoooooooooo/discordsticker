@@ -13,6 +13,52 @@ import (
 	"sync"
 )
 
+// StickerListString composes the report of a list of stickers.
+func StickerListString(stickers []*Sticker, isFullPath bool) string {
+	moreThanTen := false
+	if len(stickers) > 10 {
+		stickers = stickers[:10]
+		moreThanTen = true
+	}
+	var matchedNames []string
+	for _, s := range stickers {
+		if isFullPath {
+			matchedNames = append(matchedNames, s.StringWithHintFull())
+		} else {
+			matchedNames = append(matchedNames, s.StringWithHint())
+		}
+	}
+	sb := strings.Builder{}
+	sb.WriteString("`")
+	sb.WriteString(strings.Join(matchedNames, "`, `"))
+	sb.WriteString("`")
+	if moreThanTen {
+		sb.WriteString("... and more")
+	}
+	return sb.String()
+}
+
+// GroupListString composes the report of a list of group.
+func GroupListString(groups []*Group) string {
+	moreThanTen := false
+	if len(groups) > 10 {
+		groups = groups[:10]
+		moreThanTen = true
+	}
+	var matchedNames []string
+	for _, s := range groups {
+		matchedNames = append(matchedNames, s.StringWithHint())
+	}
+	sb := strings.Builder{}
+	sb.WriteString("`")
+	sb.WriteString(strings.Join(matchedNames, "`, `"))
+	sb.WriteString("`")
+	if moreThanTen {
+		sb.WriteString("... and more")
+	}
+	return sb.String()
+}
+
 // withHint returns the string with the optional part is hinted.
 // Note that the string is processed as []rune.
 // Sample input:
@@ -201,39 +247,32 @@ func (m *Manager) update() error {
 	return nil
 }
 
-type AddStickerResult int
-
-const (
-	AddStickerSuccess AddStickerResult = iota
-	AddStickerInvalidPathErr
-	AddStickerAlreadyExistsErr
-	AddStickerHeadErr
-	AddStickerUnsupportContentErr
-	AddStickerInvalidSizeErr
-	AddStickerImageTooLargeErr
-	AddStickerInternalErr
-)
+var UninformableErr = errors.New("Error uninformable to user")
 
 const (
 	AddStickerSizeLimit = 3500000
 )
 
-func (m *Manager) AddSticker(path, url string) (retRes AddStickerResult) {
+// AddSticker adds downloads the sticker to local and updates the sticker data.
+// UninformableErr is returned when there is an internal error occurs;
+// Otherwise there is probably an error caused by user and the error object may cantain advice if any.
+func (m *Manager) AddSticker(path, url string) (retErr error) {
 	idSplitted := strings.Split(path, "/")
 	if len(idSplitted) != 2 || idSplitted[0] == "" || idSplitted[1] == "" {
-		return AddStickerInvalidPathErr
+		return errors.New("Invalid path. Expect `<group_name>/<sticker_name>` but got `" + path + "`")
 	}
 	groupName := idSplitted[0]
 	stickerName := idSplitted[1]
 
 	if ss := m.MatchedStickers(path); len(ss) != 0 {
-		return AddStickerAlreadyExistsErr
+		matchedStr := StickerListString(ss, true)
+		return errors.New("The name has already matched the following stickers: " + matchedStr)
 	}
 
 	resp, err := http.Head(url)
 	if err != nil {
 		log.Printf("Failed to HEAD URL=%q: %v\n", url, err)
-		return AddStickerHeadErr
+		return errors.New("Failed to download the image. Is it a valid URL?")
 	}
 
 	ctype := resp.Header.Get("Content-Type")
@@ -241,22 +280,22 @@ func (m *Manager) AddSticker(path, url string) (retRes AddStickerResult) {
 	case "image/png", "image/jpeg", "image/gif":
 		// Valid types. Nothing to do.
 	default:
-		return AddStickerUnsupportContentErr
+		return errors.New("Invalid URL content type. Only png, jpeg, and gif are supported.")
 	}
 
 	size, err := strconv.Atoi(resp.Header.Get("Content-Length"))
 	if err != nil {
 		log.Println("Failed to convert the content length to integer:", err)
-		return AddStickerInvalidSizeErr
+		return errors.New("Invalid Content-Length from the URL. Is it a valid URL?")
 	}
 	if size > AddStickerSizeLimit {
-		return AddStickerImageTooLargeErr
+		return errors.New(fmt.Sprintf("Image size too large. Expect < %dB, got %d", AddStickerSizeLimit, size))
 	}
 
 	resp, err = http.Get(url)
 	if err != nil {
 		log.Printf("Failed to GET URL=%q: %v\n", url, err)
-		return AddStickerInternalErr
+		return UninformableErr
 	}
 	defer resp.Body.Close()
 
@@ -264,10 +303,10 @@ func (m *Manager) AddSticker(path, url string) (retRes AddStickerResult) {
 	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
 		if err := os.Mkdir(dirPath, 0755); err != nil {
 			log.Println("Failed to create new directory:", err)
-			return AddStickerInternalErr
+			return UninformableErr
 		}
 		defer func() {
-			if retRes != AddStickerSuccess {
+			if retErr != nil {
 				os.Remove(dirPath)
 			}
 		}()
@@ -278,10 +317,10 @@ func (m *Manager) AddSticker(path, url string) (retRes AddStickerResult) {
 	w, err := os.Create(imgPath)
 	if err != nil {
 		log.Println("Failed to create a new file:", err)
-		return AddStickerInternalErr
+		return UninformableErr
 	}
 	defer func() {
-		if retRes != AddStickerSuccess {
+		if retErr != nil {
 			os.Remove(imgPath)
 		}
 	}()
@@ -289,27 +328,21 @@ func (m *Manager) AddSticker(path, url string) (retRes AddStickerResult) {
 
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		log.Println("Failed to write the image:", err)
-		return AddStickerInternalErr
+		return UninformableErr
 	}
 
 	w.Close()
 
 	if err := m.update(); err != nil {
 		log.Println("Failed to update sticker info:", err)
-		return AddStickerInternalErr
+		return UninformableErr
 	}
 
-	return AddStickerSuccess
+	return nil
 }
 
-type RenameStickerResult int
-
-const (
-	RenameStickerNotYetImplErr RenameStickerResult = iota
-)
-
-func (m *Manager) RenameSticker(src, dst string) (retRes RenameStickerResult) {
-	return RenameStickerNotYetImplErr
+func (m *Manager) RenameSticker(src, dst string) (retErr error) {
+	return UninformableErr
 }
 
 func (m *Manager) MatchedStickers(id string) []*Sticker {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -56,31 +55,6 @@ func replyDM(s *discordgo.Session, m *discordgo.MessageCreate, reply string) {
 	}
 }
 
-// multiMatchedStr composes a report of the multi-matched stickers.
-func multiMatchedStr(stickers []*sticker.Sticker, isFullPath bool) string {
-	moreThanTen := false
-	if len(stickers) > 10 {
-		stickers = stickers[:10]
-		moreThanTen = true
-	}
-	var matchedNames []string
-	for _, s := range stickers {
-		if isFullPath {
-			matchedNames = append(matchedNames, s.StringWithHintFull())
-		} else {
-			matchedNames = append(matchedNames, s.StringWithHint())
-		}
-	}
-	sb := strings.Builder{}
-	sb.WriteString("`")
-	sb.WriteString(strings.Join(matchedNames, "`, `"))
-	sb.WriteString("`")
-	if moreThanTen {
-		sb.WriteString("... and more")
-	}
-	return sb.String()
-}
-
 func handleList(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, commandPrefix string, command []string) {
 	sm.RLock()
 	defer sm.RUnlock()
@@ -99,24 +73,19 @@ func handleList(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Ma
 	}
 
 	groupName := command[0]
-	ds := sm.MatchedGroups(groupName)
-	if len(ds) == 0 {
+	gs := sm.MatchedGroups(groupName)
+	if len(gs) == 0 {
 		replyDM(s, m, "No matched group name! Use `"+commandPrefix+"list` to query the group list.")
 		return
 	}
-	if len(ds) > 1 {
-		names := make([]string, len(ds))
-		for i, d := range ds {
-			names[i] = d.StringWithHint()
-		}
-		matchedStr := "`" + strings.Join(names, "`, `") + "`"
-		replyDM(s, m, "Matched more than one group names! Please provide more specific prefix. Matched: "+matchedStr+".")
+	if len(gs) > 1 {
+		replyDM(s, m, "Matched more than one group names! Please provide more specific prefix. Matched: "+sticker.GroupListString(gs))
 		return
 	}
 
 	sb := strings.Builder{}
 	sb.WriteString("```\n")
-	for _, s := range ds[0].Stickers() {
+	for _, s := range gs[0].Stickers() {
 		sb.WriteString(s.StringWithHint())
 		sb.WriteString("\n\t\t\t= ")
 		sb.WriteString(s.StringWithHintFull())
@@ -137,26 +106,16 @@ func handleAdd(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Man
 		return
 	}
 
-	switch res := sm.AddSticker(command[0], command[1]); res {
-	case sticker.AddStickerSuccess:
-		replyNormal(s, m, "Done.")
-	case sticker.AddStickerInvalidPathErr:
-		replyNormal(s, m, "Invalid path. Expect `<group_name>/<sticker_name>`. Try again!")
-	case sticker.AddStickerAlreadyExistsErr:
-		stickers := sm.MatchedStickers(command[0])
-		matchedStr := multiMatchedStr(stickers, strings.Contains(command[0], "/"))
-		replyNormal(s, m, "The name has already matched the following stickers: "+matchedStr+". Try again!")
-	case sticker.AddStickerHeadErr:
-		replyNormal(s, m, "Failed to download the image! Is it a valid URL?")
-	case sticker.AddStickerUnsupportContentErr:
-		replyNormal(s, m, "Invalid URL content type! Only png, jpeg, and gif are supported.")
-	case sticker.AddStickerInvalidSizeErr:
-		replyNormal(s, m, "Invalid data from the URL!")
-	case sticker.AddStickerImageTooLargeErr:
-		replyNormal(s, m, fmt.Sprintf("Image size too large! Expect < %dB.", sticker.AddStickerSizeLimit))
-	case sticker.AddStickerInternalErr:
-		replyNormal(s, m, "Something goes wrong here! Please contact the admin.")
+	if err := sm.AddSticker(command[0], command[1]); err != nil {
+		if err != sticker.UninformableErr {
+			replyNormal(s, m, err.Error())
+		} else {
+			replyNormal(s, m, "Something goes wrong here! Please contact the admin.")
+		}
+		return
 	}
+
+	replyNormal(s, m, "Done!")
 }
 
 func handleRename(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, commandPrefix string, command []string) {
@@ -168,10 +127,7 @@ func handleRename(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.
 		return
 	}
 
-	switch res := sm.RenameSticker(command[0], command[1]); res {
-	case sticker.RenameStickerNotYetImplErr:
-		replyNormal(s, m, "Not yet implemented!")
-	}
+	replyNormal(s, m, "Not yet implemented!")
 }
 
 func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, stickerID string) {
@@ -184,7 +140,7 @@ func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker
 		return
 	}
 	if len(stickers) > 1 {
-		matchedStr := multiMatchedStr(stickers, strings.Contains(stickerID, "/"))
+		matchedStr := sticker.StickerListString(stickers, strings.Contains(stickerID, "/"))
 		replyNormal(s, m, "Found more than one stickers! Please provide more specific prefix. Matched: "+matchedStr)
 		return
 	}
