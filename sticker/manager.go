@@ -39,6 +39,10 @@ func NewManager(root string) (*Manager, error) {
 	return m, nil
 }
 
+// update reads the structure of the stickers in the file system.
+// Under the root directory, this function expects directories and treats them as sticker groups;
+// Under each group directory, this function expects png, jpeg, and gif files and treats them as stickers.
+// update may returns countUniqLenError if there are conflicted sticker/group names.
 func (m *Manager) update() error {
 	var newGroups []*Group
 
@@ -114,13 +118,15 @@ func (m *Manager) update() error {
 	return nil
 }
 
+// UninformableErr indicates an internal error.
+// Functions should log the info before returning UninformableErr.
 var UninformableErr = errors.New("Error uninformable to user")
 
 const (
 	AddStickerSizeLimit = 3500000
 )
 
-// AddSticker adds downloads the sticker to local and updates the sticker data.
+// AddSticker downloads the sticker to local and updates the sticker data.
 // UninformableErr is returned when there is an internal error occurs;
 // Otherwise there is probably an error caused by user and the error object may cantain advice if any.
 func (m *Manager) AddSticker(path, url string) (retErr error) {
@@ -211,7 +217,7 @@ func (m *Manager) AddSticker(path, url string) (retErr error) {
 	return nil
 }
 
-// RenameSticker renames the sticker
+// RenameSticker renames the sticker.
 // UninformableErr is returned when there is an internal error occurs;
 // Otherwise there is probably an error caused by user and the error object may cantain advice if any.
 func (m *Manager) RenameSticker(src, dst string) (retErr error) {
@@ -295,6 +301,8 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 	return nil
 }
 
+// MatchedStickers returns the matched stickers.
+// id can be either full path or without group name.
 func (m *Manager) MatchedStickers(id string) []*Sticker {
 	tok := strings.Split(id, "/")
 	if len(tok) > 2 {
@@ -315,6 +323,7 @@ func (m *Manager) MatchedStickers(id string) []*Sticker {
 	return ret
 }
 
+// MatchedGroups returns the matched groups.
 func (m *Manager) MatchedGroups(groupName string) []*Group {
 	var ret []*Group
 	for _, g := range m.groups {

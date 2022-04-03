@@ -6,6 +6,8 @@ import (
 )
 
 // StickerListString composes the report of a list of stickers.
+// The names are shown with hint, quoted with "`", and separated by ",".
+// Example: "`pa[bc]`, `pd[ef]`, `q[abc]`"
 func StickerListString(stickers []*Sticker, isFullPath bool) string {
 	moreThanTen := false
 	if len(stickers) > 10 {
@@ -31,6 +33,8 @@ func StickerListString(stickers []*Sticker, isFullPath bool) string {
 }
 
 // GroupListString composes the report of a list of group.
+// The names are shown with hint, quoted with "`", and separated by ",".
+// Example: "`pa[bc]`, `pd[ef]`, `q[abc]`"
 func GroupListString(groups []*Group) string {
 	moreThanTen := false
 	if len(groups) > 10 {
@@ -89,6 +93,7 @@ func (e *countUniqLenError) Error() string {
 }
 
 // countUniqLen finds the unique prefix length among the whole slice for all strings.
+// countUniqLen returns only *countUniqLenError on failure.
 // An unique prefix means there is no other string has the same prefix.
 func countUniqLen(strs []string) ([]int, error) {
 	ret := make([]int, len(strs))
