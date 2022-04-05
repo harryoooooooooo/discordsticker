@@ -256,7 +256,7 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 	}
 
 	srcPath := srcMatched[0].Path()
-	dstPath := filepath.Join(m.root, dst+"."+srcMatched[0].Ext())
+	dstPath := filepath.Join(dstDir, dstSplitted[1]+"."+srcMatched[0].Ext())
 	if err := os.Rename(srcPath, dstPath); err != nil {
 		log.Println("Failed to move the image:", err)
 		return UninformableErr
@@ -264,11 +264,12 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 	defer func() {
 		if retErr != nil {
 			if err := os.Rename(dstPath, srcPath); err != nil {
-				log.Println("Failed to remove the image back:", err)
+				log.Println("Failed to move the image back:", err)
 			}
 		}
 	}()
 
+	// Remove the directory if the group becomes empty.
 	srcDir := srcMatched[0].group.Path()
 	dirsPath, err := filepath.Glob(filepath.Join(srcDir, "*"))
 	if err != nil {
@@ -276,7 +277,6 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 		return UninformableErr
 	}
 	if len(dirsPath) == 0 {
-		// Remove the directory if the group becomes empty.
 		if err := os.Remove(srcDir); err != nil {
 			log.Println("Failed to remove the directory:", err)
 			return UninformableErr

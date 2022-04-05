@@ -206,8 +206,8 @@ func userHelp(commandPrefix string) string {
 func main() {
 	var (
 		commandPrefixPtr = flag.String("command-prefix", "!!", "The prefix for the users to trigger the bot.")
-		tokenFilePathPtr = flag.String("token-file", "./token", "The file that contains the bot token.")
-		resourcePathPtr  = flag.String("resource-path", "./resources", "The root directory of the resources. Each directory in it will become the group name.")
+		tokenFilePathPtr = flag.String("token-file", "token", "The file that contains the bot token.")
+		resourcePathPtr  = flag.String("resource-path", "resources", "The root directory of the resources. Each directory in it will become the group name.")
 	)
 
 	flag.Parse()

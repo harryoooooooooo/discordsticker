@@ -28,10 +28,10 @@ go run discordsticker -help
 
 ## Usage
 
-By default the program uses the bot token in the file `./token`,
-and reads the stickers in `./resources/`.
+By default the program uses the bot token in the file `token`,
+and reads the stickers in `resources/`.
 
-Under `./resources/`, there should be directories denoting the sticker groups;
+Under `resources/`, there should be directories denoting the sticker groups;
 Inside each group, there should be stickers.
 
 The bot reads the messages with specific prefix (by default `!!`)
