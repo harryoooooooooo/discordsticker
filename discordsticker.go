@@ -4,10 +4,12 @@ import (
 	"flag"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"discordsticker/sticker"
 
@@ -139,13 +141,44 @@ func handleRename(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.
 	replyNormal(s, m, "Done!")
 }
 
-func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, stickerID string) {
+func handleRandom(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, commandPrefix string, stickerIDs []string) {
+	sm.RLock()
+	defer sm.RUnlock()
+
+	var stickers []*sticker.Sticker
+	for _, id := range stickerIDs {
+		stickers = append(stickers, sm.MatchedStickers(id)...)
+	}
+
+	if len(stickers) == 0 {
+		replyNormal(s, m, "Cannot find any matched sticker. Find the sticker names with `"+commandPrefix+"list` command.")
+		return
+	}
+
+	sticker := stickers[rand.Intn(len(stickers))]
+
+	r, err := os.Open(sticker.Path())
+	if err != nil {
+		log.Println("Failed to open the image:", err)
+		replyNormal(s, m, "Something goes wrong here! Please contact the admin.")
+		return
+	}
+	defer r.Close()
+
+	if _, err := s.ChannelFileSend(m.ChannelID, "sticker."+stickers[0].Ext(), r); err != nil {
+		log.Println("Failed to post sticker:", err)
+		replyNormal(s, m, "Failed to post sticker!")
+		return
+	}
+}
+
+func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, commandPrefix, stickerID string) {
 	sm.RLock()
 	defer sm.RUnlock()
 
 	stickers := sm.MatchedStickers(stickerID)
 	if len(stickers) == 0 {
-		replyNormal(s, m, "Cannot find the sticker you're looking for. Find the sticker name with `list` command.")
+		replyNormal(s, m, "Cannot find the sticker you're looking for. Find the sticker name with `"+commandPrefix+"list` command.")
 		return
 	}
 	if len(stickers) > 1 {
@@ -190,6 +223,9 @@ func userHelp(commandPrefix string) string {
 		"rename <sticker_name> <new_full_path>",
 		"Move the sticker on `<sticker_name>` to `<new_full_path>`. Note that a full path should includes directory name.",
 	}, {
+		"random [<group_prefix>/]<sticker_prefix>...",
+		"All stickers that match the prefixes will be collected, and a random one will be post.",
+	}, {
 		"<sticker_name>",
 		"A command that does not match any of the above is considered a sticker name. Use `" + commandPrefix + "list` to view the available stickers.",
 	}} {
@@ -228,7 +264,7 @@ func main() {
 	log.Println("\ttoken file         =", tokenFilePath)
 	log.Println("\tresource directory =", resourcePath)
 
-	userHelpStr := userHelp(commandPrefix)
+	rand.Seed(time.Now().UnixNano())
 
 	sm, err := sticker.NewManager(resourcePath)
 	if err != nil {
@@ -244,6 +280,8 @@ func main() {
 	if err != nil {
 		log.Fatalln("Failed to create Discord session:", err)
 	}
+
+	userHelpStr := userHelp(commandPrefix)
 
 	s.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
 		// Ignore all messages created by the bot itself.
@@ -270,8 +308,10 @@ func main() {
 			handleAdd(s, m, sm, commandPrefix, command[1:])
 		case "rename":
 			handleRename(s, m, sm, commandPrefix, command[1:])
+		case "random":
+			handleRandom(s, m, sm, commandPrefix, command[1:])
 		default: // Consider the command name as the sticker ID.
-			handleSticker(s, m, sm, command[0])
+			handleSticker(s, m, sm, commandPrefix, command[0])
 		}
 	})
 
