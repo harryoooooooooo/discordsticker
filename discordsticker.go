@@ -294,7 +294,7 @@ func main() {
 			return
 		}
 
-		command := strings.Split(m.Content[2:], " ")
+		command := strings.Fields(m.Content[2:])
 		if command[0] == "" {
 			command = []string{"help"}
 		}
