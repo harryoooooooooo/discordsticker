@@ -295,7 +295,7 @@ func main() {
 		}
 
 		command := strings.Fields(m.Content[2:])
-		if command[0] == "" {
+		if len(command) == 0 {
 			command = []string{"help"}
 		}
 
