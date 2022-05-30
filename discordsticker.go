@@ -16,6 +16,8 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+const maxMsgLen = 2000
+
 // replyNormal sends message back to the channel from where we got the message.
 func replyNormal(s *discordgo.Session, m *discordgo.MessageCreate, reply string) {
 	if _, err := s.ChannelMessageSend(m.ChannelID, reply); err != nil {
@@ -57,46 +59,77 @@ func replyDM(s *discordgo.Session, m *discordgo.MessageCreate, reply string) {
 	}
 }
 
+func quotedMessagesToTrunks(lines []string) []string {
+	const (
+		head = "```\n"
+		tail = "\n```\n"
+	)
+	ret := []string{}
+	sb := strings.Builder{}
+	for _, l := range lines {
+		if len(head)+sb.Len()+1+len(l)+len(tail) <= maxMsgLen {
+			sb.WriteString("\n")
+			sb.WriteString(l)
+			continue
+		}
+		if sb.Len() != 0 {
+			ret = append(ret, head+sb.String()+tail)
+			sb.Reset()
+		}
+		if len(head)+len(l)+len(tail) <= maxMsgLen {
+			sb.WriteString(l)
+		} else {
+			sb.WriteString(l[:maxMsgLen-len(head)-len(" ...")-len(tail)])
+			sb.WriteString(" ...")
+		}
+	}
+	if sb.Len() != 0 {
+		ret = append(ret, head+sb.String()+tail)
+	}
+	return ret
+}
+
 func handleList(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, commandPrefix string, command []string) {
 	sm.RLock()
 	defer sm.RUnlock()
 
+	helpMsg := ""
+	msgs := []string{}
+
 	if len(command) == 0 {
-		sb := strings.Builder{}
-		sb.WriteString("```\n")
+		helpMsg = "Use `" + commandPrefix + "list <group_name>` to query the available stickers inside a group.\n"
 		for _, g := range sm.Groups() {
-			sb.WriteString(g.StringWithHint())
-			sb.WriteString("\n")
+			msgs = append(msgs, g.StringWithHint())
 		}
-		sb.WriteString("```\n")
-		sb.WriteString("Use `" + commandPrefix + "list <group_name>` to query the available stickers inside a group.")
-		replyDM(s, m, sb.String())
-		return
+	} else {
+		groupName := command[0]
+		gs := sm.MatchedGroups(groupName)
+		if len(gs) == 0 {
+			replyDM(s, m, "No matched group name! Use `"+commandPrefix+"list` to query the group list.")
+			return
+		}
+		if len(gs) > 1 {
+			replyDM(s, m, "Matched more than one group names! Please provide more specific prefix. Matched: "+sticker.GroupListString(gs))
+			return
+		}
+
+		helpMsg = "Each sticker has two valid names -- One includes directory (group) name and one works globally.\n"
+		helpMsg += "Note that the characters inside the brackets are optional. That is, a sticker shown as `巧[克力]` can be specified with `巧`, `巧克`, and `巧克力`.\n"
+		for _, s := range gs[0].Stickers() {
+			msgs = append(msgs, s.StringWithHint())
+			msgs = append(msgs, "\t\t\t= "+s.StringWithHintFull())
+		}
 	}
 
-	groupName := command[0]
-	gs := sm.MatchedGroups(groupName)
-	if len(gs) == 0 {
-		replyDM(s, m, "No matched group name! Use `"+commandPrefix+"list` to query the group list.")
-		return
+	msgs = quotedMessagesToTrunks(msgs)
+	if len(msgs) > 0 && len(msgs[len(msgs)-1])+len(helpMsg) <= maxMsgLen {
+		msgs[len(msgs)-1] += helpMsg
+	} else {
+		msgs = append(msgs, helpMsg)
 	}
-	if len(gs) > 1 {
-		replyDM(s, m, "Matched more than one group names! Please provide more specific prefix. Matched: "+sticker.GroupListString(gs))
-		return
+	for _, msg := range msgs {
+		replyDM(s, m, msg)
 	}
-
-	sb := strings.Builder{}
-	sb.WriteString("```\n")
-	for _, s := range gs[0].Stickers() {
-		sb.WriteString(s.StringWithHint())
-		sb.WriteString("\n\t\t\t= ")
-		sb.WriteString(s.StringWithHintFull())
-		sb.WriteString("\n")
-	}
-	sb.WriteString("```\n")
-	sb.WriteString("Each sticker has two valid names -- One includes directory (group) name and one works globally.\n")
-	sb.WriteString("Note that the characters inside the brackets are optional. That is, a sticker shown as `巧[克力]` can be specified with `巧`, `巧克`, and `巧克力`.")
-	replyDM(s, m, sb.String())
 }
 
 func handleAdd(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, commandPrefix string, command []string) {
