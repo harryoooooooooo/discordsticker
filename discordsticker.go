@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"discordsticker/sticker"
+	"discordsticker/utils"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -277,6 +278,7 @@ func main() {
 		commandPrefixPtr = flag.String("command-prefix", "!!", "The prefix for the users to trigger the bot.")
 		tokenFilePathPtr = flag.String("token-file", "token", "The file that contains the bot token.")
 		resourcePathPtr  = flag.String("resource-path", "resources", "The root directory of the resources. Each directory in it will become the group name.")
+		coolDownPtr      = flag.Duration("cool-dowm", 5*time.Second, "The cool down interval for each channel to post a sticker (including 'random' command).")
 	)
 
 	flag.Parse()
@@ -288,6 +290,7 @@ func main() {
 		commandPrefix = *commandPrefixPtr
 		tokenFilePath = *tokenFilePathPtr
 		resourcePath  = *resourcePathPtr
+		coolDown      = *coolDownPtr
 	)
 
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile | log.Lmsgprefix)
@@ -296,6 +299,7 @@ func main() {
 	log.Println("\tcommand prefix     =", commandPrefix)
 	log.Println("\ttoken file         =", tokenFilePath)
 	log.Println("\tresource directory =", resourcePath)
+	log.Println("\tcool down interval =", coolDown)
 
 	rand.Seed(time.Now().UnixNano())
 
@@ -313,6 +317,8 @@ func main() {
 	if err != nil {
 		log.Fatalln("Failed to create Discord session:", err)
 	}
+
+	cd := utils.NewCoolDownCounter()
 
 	userHelpStr := userHelp(commandPrefix)
 
@@ -342,9 +348,13 @@ func main() {
 		case "rename":
 			handleRename(s, m, sm, commandPrefix, command[1:])
 		case "random":
-			handleRandom(s, m, sm, commandPrefix, command[1:])
+			if coolDown == 0 || cd.CoolDown(coolDown, m.ChannelID) {
+				handleRandom(s, m, sm, commandPrefix, command[1:])
+			}
 		default: // Consider the command name as the sticker ID.
-			handleSticker(s, m, sm, commandPrefix, command[0])
+			if coolDown == 0 || cd.CoolDown(coolDown, m.ChannelID) {
+				handleSticker(s, m, sm, commandPrefix, command[0])
+			}
 		}
 	})
 
