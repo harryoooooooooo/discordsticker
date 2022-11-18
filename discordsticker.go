@@ -94,31 +94,19 @@ func handleList(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Ma
 	sm.RLock()
 	defer sm.RUnlock()
 
-	helpMsg := ""
+	helpMsg := "The characters inside the brackets are optional. That is, a sticker shown as `巧[克力]` can be specified with `巧`, `巧克`, and `巧克力`.\n"
 	msgs := []string{}
 
 	if len(command) == 0 {
-		helpMsg = "Use `" + commandPrefix + "list <group_name>` to query the available stickers inside a group.\n"
-		for _, g := range sm.Groups() {
-			msgs = append(msgs, g.StringWithHint())
+		helpMsg += "Use `" + commandPrefix + "list <prefix>` to show only the matched stickers.\n"
+		for _, s := range sm.Stickers() {
+			msgs = append(msgs, s.StringWithHint())
 		}
 	} else {
-		groupName := command[0]
-		gs := sm.MatchedGroups(groupName)
-		if len(gs) == 0 {
-			replyDM(s, m, "No matched group name! Use `"+commandPrefix+"list` to query the group list.")
-			return
-		}
-		if len(gs) > 1 {
-			replyDM(s, m, "Matched more than one group names! Please provide more specific prefix. Matched: "+sticker.GroupListString(gs))
-			return
-		}
-
-		helpMsg = "Each sticker has two valid names -- One includes directory (group) name and one works globally.\n"
-		helpMsg += "Note that the characters inside the brackets are optional. That is, a sticker shown as `巧[克力]` can be specified with `巧`, `巧克`, and `巧克力`.\n"
-		for _, s := range gs[0].Stickers() {
+		prefix := command[0]
+		ss := sm.MatchedStickers(prefix)
+		for _, s := range ss {
 			msgs = append(msgs, s.StringWithHint())
-			msgs = append(msgs, "\t\t\t= "+s.StringWithHintFull())
 		}
 	}
 
@@ -138,7 +126,7 @@ func handleAdd(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Man
 	defer sm.Unlock()
 
 	if len(command) != 2 {
-		replyNormal(s, m, "Invalid format. Expect `"+commandPrefix+"add <full_path> <URL>`. Try again!")
+		replyNormal(s, m, "Invalid format. Expect `"+commandPrefix+"add <sticker_name> <URL>`. Try again!")
 		return
 	}
 
@@ -159,7 +147,7 @@ func handleRename(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.
 	defer sm.Unlock()
 
 	if len(command) != 2 {
-		replyNormal(s, m, "Invalid format. Expect `"+commandPrefix+"rename <sticker_name> <new_full_path>. Try again!`")
+		replyNormal(s, m, "Invalid format. Expect `"+commandPrefix+"rename <sticker_name> <new_sticker_name>. Try again!`")
 		return
 	}
 
@@ -199,7 +187,7 @@ func handleRandom(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.
 	}
 	defer r.Close()
 
-	if _, err := s.ChannelFileSend(m.ChannelID, "sticker."+stickers[0].Ext(), r); err != nil {
+	if _, err := s.ChannelFileSend(m.ChannelID, "sticker"+stickers[0].Ext(), r); err != nil {
 		log.Println("Failed to post sticker:", err)
 		replyNormal(s, m, "Failed to post sticker!")
 		return
@@ -216,7 +204,7 @@ func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker
 		return
 	}
 	if len(stickers) > 1 {
-		matchedStr := sticker.StickerListString(stickers, strings.Contains(stickerID, "/"))
+		matchedStr := sticker.StickerListString(stickers)
 		replyNormal(s, m, "Found more than one stickers! Please provide more specific prefix. Matched: "+matchedStr)
 		return
 	}
@@ -229,7 +217,7 @@ func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker
 	}
 	defer r.Close()
 
-	if _, err := s.ChannelFileSend(m.ChannelID, "sticker."+stickers[0].Ext(), r); err != nil {
+	if _, err := s.ChannelFileSend(m.ChannelID, "sticker"+stickers[0].Ext(), r); err != nil {
 		log.Println("Failed to post sticker:", err)
 		replyNormal(s, m, "Failed to post sticker!")
 		return
@@ -248,16 +236,16 @@ func userHelp(commandPrefix string) string {
 		"help",
 		"Show this message.",
 	}, {
-		"list [<group_name>]",
-		"If `<group_name>` is not given, list all directory (group) names; Otherwise, list all stickers inside `<group_name>`.",
+		"list [<prefix>]",
+		"If `<prefix>` is not given, list all stickers; Otherwise, list all stickers matching `<prefix>`.",
 	}, {
-		"add <full_path> <URL>",
-		"Download and save the image at `<URL>` as a new sticker. Note that a full path should includes directory name.",
+		"add <sticker_name> <URL>",
+		"Download and save the image at `<URL>` as a new sticker.",
 	}, {
-		"rename <sticker_name> <new_full_path>",
-		"Move the sticker on `<sticker_name>` to `<new_full_path>`. Note that a full path should includes directory name.",
+		"rename <sticker_name> <new_sticker_name>",
+		"Move the sticker on `<sticker_name>` to `<new_sticker_name>`.",
 	}, {
-		"random [<group_prefix>/]<sticker_prefix>...",
+		"random <sticker_prefix>...",
 		"All stickers that match the prefixes will be collected, and a random one will be post.",
 	}, {
 		"<sticker_name>",
