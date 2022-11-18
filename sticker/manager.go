@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -16,8 +17,8 @@ import (
 // Manager holds the cached sticker info.
 // Note that it's caller's responsibility to lock the resource.
 type Manager struct {
-	root   string
-	groups []*Group
+	root     string
+	stickers []*Sticker
 
 	mu sync.RWMutex
 }
@@ -27,12 +28,12 @@ func (m *Manager) Unlock()  { m.mu.Unlock() }
 func (m *Manager) RLock()   { m.mu.RLock() }
 func (m *Manager) RUnlock() { m.mu.RUnlock() }
 
-func (m *Manager) Groups() []*Group {
-	return m.groups
+func (m *Manager) Stickers() []*Sticker {
+	return m.stickers
 }
 
 func NewManager(root string) (*Manager, error) {
-	m := &Manager{root: root}
+	m := &Manager{root: filepath.Clean(root)}
 	if err := m.update(); err != nil {
 		return nil, err
 	}
@@ -40,80 +41,60 @@ func NewManager(root string) (*Manager, error) {
 }
 
 // update reads the structure of the stickers in the file system.
-// Under the root directory, this function expects directories and treats them as sticker groups;
-// Under each group directory, this function expects png, jpeg, and gif files and treats them as stickers.
-// update may returns countUniqLenError if there are conflicted sticker/group names.
+// Under the root directory, this function walks recursively into every directory,
+// and treats all found png, jpeg, and gif files as stickers.
+// The filepath separator in the sticker names will be replaced by '-'.
+// update may returns countUniqLenError if there are conflicted sticker names.
 func (m *Manager) update() error {
-	var newGroups []*Group
+	var paths []string
 
-	dirsPath, err := filepath.Glob(filepath.Join(m.root, "*"))
-	if err != nil {
-		return err
-	}
-	dirsBase := make([]string, len(dirsPath))
-	for i, d := range dirsPath {
-		dirsBase[i] = filepath.Base(d)
-	}
-	dirsUniqLen, err := countUniqLen(dirsBase)
-	if err != nil {
-		return err
-	}
-
-	var allImgsName []string
-	for dirI, dirPath := range dirsPath {
-		imgsPath, err := filepath.Glob(filepath.Join(dirPath, "*"))
+	if err := filepath.WalkDir(m.root, func(path string, d fs.DirEntry, err error) error {
+		if path == m.root {
+			return nil
+		}
 		if err != nil {
-			return err
+			log.Printf("WalkDir failed, path=%s err=%v\n", path, err)
+			return fs.SkipDir
 		}
-
-		newGroup := &Group{
-			name:     dirsBase[dirI],
-			uniqLen:  dirsUniqLen[dirI],
-			stickers: make([]*Sticker, len(imgsPath)),
-			root:     m.root,
-		}
-
-		imgsName := make([]string, len(imgsPath))
-		imgsExt := make([]string, len(imgsPath))
-		for i, im := range imgsPath {
-			b := filepath.Base(im)
-			e := filepath.Ext(im)
-			imgsName[i] = b[:len(b)-len(e)]
-			imgsExt[i] = e[1:]
-		}
-
-		imgsUniqLen, err := countUniqLen(imgsName)
-		if err != nil {
-			return err
-		}
-
-		for i, l := range imgsUniqLen {
-			newGroup.stickers[i] = &Sticker{
-				name:    imgsName[i],
-				ext:     imgsExt[i],
-				uniqLen: l,
-				group:   newGroup,
+		if d.IsDir() {
+			log.Printf("Directory found, support of directories could be deprecated in the future, path=%s\n", path)
+		} else {
+			if filepath.Ext(path) == "" {
+				log.Printf("Found a file without extension, skipped, path=%s\n", path)
+			} else {
+				paths = append(paths, path)
 			}
 		}
-
-		newGroups = append(newGroups, newGroup)
-		allImgsName = append(allImgsName, imgsName...)
+		return nil
+	}); err != nil {
+		return err
 	}
 
-	allImgsUniqLen, err := countUniqLen(allImgsName)
+	names := make([]string, len(paths))
+	for i, p := range paths {
+		ext := filepath.Ext(p)
+		name := p[len(m.root) : len(p)-len(ext)]
+		if name[0] == filepath.Separator {
+			name = name[1:]
+		}
+		names[i] = strings.ReplaceAll(filepath.ToSlash(name), "/", "-")
+	}
+
+	uniqLen, err := countUniqLen(names)
 	if err != nil {
 		return err
 	}
 
-	i := 0
-	for _, g := range newGroups {
-		for _, s := range g.stickers {
-			s.uniqLenGlob = allImgsUniqLen[i]
-			i++
+	stickers := make([]*Sticker, len(paths))
+	for i := range stickers {
+		stickers[i] = &Sticker{
+			name:    names[i],
+			path:    paths[i],
+			uniqLen: uniqLen[i],
 		}
 	}
 
-	m.groups = newGroups
+	m.stickers = stickers
 
 	return nil
 }
@@ -130,15 +111,12 @@ const (
 // UninformableErr is returned when there is an internal error occurs;
 // Otherwise there is probably an error caused by user and the error object may cantain advice if any.
 func (m *Manager) AddSticker(path, url string) (retErr error) {
-	idSplitted := strings.Split(path, "/")
-	if len(idSplitted) != 2 || idSplitted[0] == "" || idSplitted[1] == "" {
-		return errors.New("Invalid path. Expect `<group_name>/<sticker_name>` but got `" + path + "`")
+	if strings.Contains(filepath.ToSlash(path), "/") {
+		return errors.New(fmt.Sprintf("Invalid sticker path, filepath separator (%c) or slash is included", filepath.Separator))
 	}
-	groupName := idSplitted[0]
-	stickerName := idSplitted[1]
 
 	if ss := m.MatchedStickers(path); len(ss) != 0 {
-		matchedStr := StickerListString(ss, true)
+		matchedStr := StickerListString(ss)
 		return errors.New("The name has already matched the following stickers: " + matchedStr)
 	}
 
@@ -172,21 +150,8 @@ func (m *Manager) AddSticker(path, url string) (retErr error) {
 	}
 	defer resp.Body.Close()
 
-	dirPath := filepath.Join(m.root, groupName)
-	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-		if err := os.Mkdir(dirPath, 0755); err != nil {
-			log.Println("Failed to create new directory:", err)
-			return UninformableErr
-		}
-		defer func() {
-			if retErr != nil {
-				os.Remove(dirPath)
-			}
-		}()
-	}
-
 	ext := ctype[len("image/"):]
-	imgPath := filepath.Join(dirPath, stickerName+"."+ext)
+	imgPath := filepath.Join(m.root, path+"."+ext)
 	w, err := os.Create(imgPath)
 	if err != nil {
 		log.Println("Failed to create a new file:", err)
@@ -226,37 +191,21 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 		return errors.New("Sticker not found.")
 	}
 	if len(srcMatched) > 1 {
-		matchedStr := StickerListString(srcMatched, strings.Contains(src, "/"))
+		matchedStr := StickerListString(srcMatched)
 		return errors.New("Found more than one stickers. Matched: " + matchedStr)
 	}
 
-	dstSplitted := strings.Split(dst, "/")
-	if len(dstSplitted) != 2 || dstSplitted[0] == "" || dstSplitted[1] == "" {
-		return errors.New("Invalid path. Expect `<group_name>/<sticker_name>` but got `" + dst + "`")
+	if strings.Contains(filepath.ToSlash(dst), "/") {
+		return errors.New(fmt.Sprintf("Invalid dst path, filepath separator (%c) or slash is included", filepath.Separator))
 	}
 
 	dstMatched := m.MatchedStickers(dst)
 	if len(dstMatched) > 1 || (len(dstMatched) == 1 && dstMatched[0] != srcMatched[0]) {
-		return errors.New("The new path already matched existing stickers: " + StickerListString(dstMatched, true))
-	}
-
-	dstDir := filepath.Join(m.root, dstSplitted[0])
-	if _, err := os.Stat(dstDir); os.IsNotExist(err) {
-		if err := os.Mkdir(dstDir, 0755); err != nil {
-			log.Println("Failed to create new directory:", err)
-			return UninformableErr
-		}
-		defer func() {
-			if retErr != nil {
-				if err := os.Remove(dstDir); err != nil {
-					log.Println("Failed to remove the newly created directory:", err)
-				}
-			}
-		}()
+		return errors.New("The new path already matched existing stickers: " + StickerListString(dstMatched))
 	}
 
 	srcPath := srcMatched[0].Path()
-	dstPath := filepath.Join(dstDir, dstSplitted[1]+"."+srcMatched[0].Ext())
+	dstPath := filepath.Join(m.root, dst+srcMatched[0].Ext())
 	if err := os.Rename(srcPath, dstPath); err != nil {
 		log.Println("Failed to move the image:", err)
 		return UninformableErr
@@ -268,27 +217,6 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 			}
 		}
 	}()
-
-	// Remove the directory if the group becomes empty.
-	srcDir := srcMatched[0].group.Path()
-	dirsPath, err := filepath.Glob(filepath.Join(srcDir, "*"))
-	if err != nil {
-		log.Println("Failed to count the file number in the source directory:", err)
-		return UninformableErr
-	}
-	if len(dirsPath) == 0 {
-		if err := os.Remove(srcDir); err != nil {
-			log.Println("Failed to remove the directory:", err)
-			return UninformableErr
-		}
-		defer func() {
-			if retErr != nil {
-				if err := os.Mkdir(srcDir, 0755); err != nil {
-					log.Println("Failed to create the source directory back:", err)
-				}
-			}
-		}()
-	}
 
 	if err := m.update(); err != nil {
 		if _, ok := err.(*countUniqLenError); ok {
@@ -302,33 +230,11 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 }
 
 // MatchedStickers returns the matched stickers.
-// id can be either full path or without group name.
-func (m *Manager) MatchedStickers(id string) []*Sticker {
-	tok := strings.Split(id, "/")
-	if len(tok) > 2 {
-		return nil
-	}
-	groups, name := m.groups, tok[0]
-	if len(tok) > 1 {
-		groups, name = m.MatchedGroups(tok[0]), tok[1]
-	}
+func (m *Manager) MatchedStickers(name string) []*Sticker {
 	var ret []*Sticker
-	for _, g := range groups {
-		for _, s := range g.stickers {
-			if strings.HasPrefix(s.name, name) {
-				ret = append(ret, s)
-			}
-		}
-	}
-	return ret
-}
-
-// MatchedGroups returns the matched groups.
-func (m *Manager) MatchedGroups(groupName string) []*Group {
-	var ret []*Group
-	for _, g := range m.groups {
-		if strings.HasPrefix(g.name, groupName) {
-			ret = append(ret, g)
+	for _, s := range m.stickers {
+		if strings.HasPrefix(s.name, name) {
+			ret = append(ret, s)
 		}
 	}
 	return ret

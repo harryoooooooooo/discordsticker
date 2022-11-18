@@ -8,7 +8,7 @@ import (
 // StickerListString composes the report of a list of stickers.
 // The names are shown with hint, quoted with "`", and separated by ",".
 // Example: "`pa[bc]`, `pd[ef]`, `q[abc]`"
-func StickerListString(stickers []*Sticker, isFullPath bool) string {
+func StickerListString(stickers []*Sticker) string {
 	moreThanTen := false
 	if len(stickers) > 10 {
 		stickers = stickers[:10]
@@ -16,33 +16,6 @@ func StickerListString(stickers []*Sticker, isFullPath bool) string {
 	}
 	var matchedNames []string
 	for _, s := range stickers {
-		if isFullPath {
-			matchedNames = append(matchedNames, s.StringWithHintFull())
-		} else {
-			matchedNames = append(matchedNames, s.StringWithHint())
-		}
-	}
-	sb := strings.Builder{}
-	sb.WriteString("`")
-	sb.WriteString(strings.Join(matchedNames, "`, `"))
-	sb.WriteString("`")
-	if moreThanTen {
-		sb.WriteString("... and more")
-	}
-	return sb.String()
-}
-
-// GroupListString composes the report of a list of group.
-// The names are shown with hint, quoted with "`", and separated by ",".
-// Example: "`pa[bc]`, `pd[ef]`, `q[abc]`"
-func GroupListString(groups []*Group) string {
-	moreThanTen := false
-	if len(groups) > 10 {
-		groups = groups[:10]
-		moreThanTen = true
-	}
-	var matchedNames []string
-	for _, s := range groups {
 		matchedNames = append(matchedNames, s.StringWithHint())
 	}
 	sb := strings.Builder{}
