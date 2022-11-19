@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -108,7 +109,7 @@ func handleList(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Ma
 	msgs := []string{}
 
 	if len(command) == 0 {
-		helpMsg += "Use `" + commandPrefix + "list <prefix>` to show only the matched stickers.\n"
+		helpMsg += "Use `" + commandPrefix + "/list <prefix>` to show only the matched stickers.\n"
 		for _, s := range sm.Stickers() {
 			msgs = append(msgs, s.StringWithHint())
 		}
@@ -136,7 +137,7 @@ func handleAdd(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Man
 	defer sm.Unlock()
 
 	if len(command) != 2 {
-		replyNormal(s, m, "Invalid format. Expect `"+commandPrefix+"add <sticker_name> <URL>`. Try again!")
+		replyNormal(s, m, "Invalid format. Expect `"+commandPrefix+"/add <sticker_name> <URL>`. Try again!")
 		return
 	}
 
@@ -157,7 +158,7 @@ func handleRename(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.
 	defer sm.Unlock()
 
 	if len(command) != 2 {
-		replyNormal(s, m, "Invalid format. Expect `"+commandPrefix+"rename <sticker_name> <new_sticker_name>. Try again!`")
+		replyNormal(s, m, "Invalid format. Expect `"+commandPrefix+"/rename <sticker_name> <new_sticker_name>. Try again!`")
 		return
 	}
 
@@ -183,7 +184,7 @@ func handleRandom(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.
 	}
 
 	if len(stickers) == 0 {
-		replyNormal(s, m, "Cannot find any matched sticker. Find the sticker names with `"+commandPrefix+"list` command.")
+		replyNormal(s, m, "Cannot find any matched sticker. Find the sticker names with `"+commandPrefix+"/list` command.")
 		return
 	}
 
@@ -210,7 +211,7 @@ func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker
 
 	stickers := sm.MatchedStickers(stickerID)
 	if len(stickers) == 0 {
-		replyNormal(s, m, "Cannot find the sticker you're looking for. Find the sticker name with `"+commandPrefix+"list` command.")
+		replyNormal(s, m, "Cannot find the sticker you're looking for. Find the sticker name with `"+commandPrefix+"/list` command.")
 		return
 	}
 	if len(stickers) > 1 {
@@ -243,23 +244,23 @@ func buildUserHelp() string {
 		command string
 		desc    string
 	}{{
-		"help",
+		"/help",
 		"Show this message.",
 	}, {
-		"list [<prefix>]",
+		"/list [<prefix>]",
 		"If `<prefix>` is not given, list all stickers; Otherwise, list all stickers matching `<prefix>`.",
 	}, {
-		"add <sticker_name> <URL>",
+		"/add <sticker_name> <URL>",
 		"Download and save the image at `<URL>` as a new sticker.",
 	}, {
-		"rename <sticker_name> <new_sticker_name>",
+		"/rename <sticker_name> <new_sticker_name>",
 		"Move the sticker on `<sticker_name>` to `<new_sticker_name>`.",
 	}, {
-		"random <sticker_prefix>...",
+		"/random <sticker_prefix>...",
 		"All stickers that match the prefixes will be collected, and a random one will be post.",
 	}, {
 		"<sticker_name>",
-		"A command that does not match any of the above is considered a sticker name. Use `" + commandPrefix + "list` to view the available stickers.",
+		"A command that does not match any of the above is considered a sticker name. Use `" + commandPrefix + "/list` to view the available stickers.",
 	}} {
 		sb.WriteString("`")
 		sb.WriteString(commandPrefix)
@@ -329,28 +330,57 @@ func main() {
 			return
 		}
 
-		command := strings.Fields(m.Content[2:])
+		command := strings.Fields(m.Content[len(commandPrefix):])
 		if len(command) == 0 {
-			command = []string{"help"}
+			replyDM(s, m, userHelp)
+			return
 		}
 
-		switch command[0] {
-		case "help":
-			replyDM(s, m, userHelp)
-		case "list":
-			handleList(s, m, sm, command[1:])
-		case "add":
-			handleAdd(s, m, sm, command[1:])
-		case "rename":
-			handleRename(s, m, sm, command[1:])
-		case "random":
-			if coolDown == 0 || cd.CoolDown(coolDown, m.ChannelID) {
-				handleRandom(s, m, sm, command[1:])
-			}
-		default: // Consider the command name as the sticker ID.
+		// Non-command case.
+		if command[0][0] != '/' {
 			if coolDown == 0 || cd.CoolDown(coolDown, m.ChannelID) {
 				handleSticker(s, m, sm, command[0])
 			}
+			return
+		}
+
+		var matchedCommands []string
+		for _, comm := range []string{"help", "list", "add", "rename", "random"} {
+			if strings.HasPrefix(comm, command[0][1:]) {
+				matchedCommands = append(matchedCommands, comm)
+			}
+		}
+
+		if len(matchedCommands) > 1 {
+			for i, comm := range matchedCommands {
+				matchedCommands[i] = fmt.Sprintf("`%s/%s`", commandPrefix, comm)
+			}
+			replyNormal(s, m, "Matched more then 1 commands: "+strings.Join(matchedCommands, ", "))
+			return
+		}
+
+		if len(matchedCommands) < 1 {
+			replyDM(s, m, fmt.Sprintf("Unknown command `%s%s`\n", commandPrefix, command[0])+userHelp)
+			return
+		}
+
+		command = command[1:]
+
+		switch matchedCommands[0] {
+		case "help":
+			replyDM(s, m, userHelp)
+		case "list":
+			handleList(s, m, sm, command)
+		case "add":
+			handleAdd(s, m, sm, command)
+		case "rename":
+			handleRename(s, m, sm, command)
+		case "random":
+			if coolDown == 0 || cd.CoolDown(coolDown, m.ChannelID) {
+				handleRandom(s, m, sm, command)
+			}
+		default:
+			panic("Should not go here")
 		}
 	})
 
