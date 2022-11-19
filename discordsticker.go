@@ -71,6 +71,36 @@ func replyDM(s *discordgo.Session, m *discordgo.MessageCreate, reply string) {
 	}
 }
 
+func buildPatternGroups(fields []string) [][]string {
+	var toks []string
+	for _, f := range fields {
+		for _, s := range strings.SplitAfter(f, "/") {
+			if s == "" {
+				continue
+			}
+			if s[len(s)-1] == '/' {
+				if len(s) > 1 {
+					toks = append(toks, s[:len(s)-1])
+				}
+				toks = append(toks, "/")
+			} else {
+				toks = append(toks, s)
+			}
+		}
+	}
+	var ret [][]string
+	begin := 0
+	end := 0
+	for end < len(toks) {
+		if toks[end] == "/" {
+			ret = append(ret, toks[begin:end])
+			begin = end + 1
+		}
+		end++
+	}
+	return append(ret, toks[begin:end])
+}
+
 func quotedMessagesToTrunks(lines []string) []string {
 	const (
 		head = "```\n"
@@ -105,29 +135,19 @@ func handleList(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Ma
 	sm.RLock()
 	defer sm.RUnlock()
 
-	helpMsg := "The characters inside the brackets are optional. That is, a sticker shown as `巧[克力]` can be specified with `巧`, `巧克`, and `巧克力`.\n"
-	msgs := []string{}
-
+	var ss []*sticker.Sticker
 	if len(command) == 0 {
-		helpMsg += "Use `" + commandPrefix + "/list <prefix>` to show only the matched stickers.\n"
-		for _, s := range sm.Stickers() {
-			msgs = append(msgs, s.StringWithHint())
-		}
+		ss = sm.Stickers()
 	} else {
-		prefix := command[0]
-		ss := sm.MatchedStickers(prefix)
-		for _, s := range ss {
-			msgs = append(msgs, s.StringWithHint())
-		}
+		ss = sm.MatchedStickers(buildPatternGroups(command))
 	}
 
-	msgs = quotedMessagesToTrunks(msgs)
-	if len(msgs) > 0 && len(msgs[len(msgs)-1])+len(helpMsg) <= maxMsgLen {
-		msgs[len(msgs)-1] += helpMsg
-	} else {
-		msgs = append(msgs, helpMsg)
+	msgs := make([]string, len(ss))
+	for i, s := range ss {
+		msgs[i] = s.Name()
 	}
-	for _, msg := range msgs {
+
+	for _, msg := range quotedMessagesToTrunks(msgs) {
 		replyDM(s, m, msg)
 	}
 }
@@ -174,14 +194,11 @@ func handleRename(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.
 	replyNormal(s, m, "Done!")
 }
 
-func handleRandom(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, stickerIDs []string) {
+func handleRandom(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, command []string) {
 	sm.RLock()
 	defer sm.RUnlock()
 
-	var stickers []*sticker.Sticker
-	for _, id := range stickerIDs {
-		stickers = append(stickers, sm.MatchedStickers(id)...)
-	}
+	stickers := sm.MatchedStickers(buildPatternGroups(command))
 
 	if len(stickers) == 0 {
 		replyNormal(s, m, "Cannot find any matched sticker. Find the sticker names with `"+commandPrefix+"/list` command.")
@@ -205,18 +222,24 @@ func handleRandom(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.
 	}
 }
 
-func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, stickerID string) {
+func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, command []string) {
 	sm.RLock()
 	defer sm.RUnlock()
 
-	stickers := sm.MatchedStickers(stickerID)
+	pg := buildPatternGroups(command)
+	if len(pg) > 1 {
+		replyNormal(s, m, "List command should not contain slash ('/').")
+		return
+	}
+
+	stickers := sm.MatchedStickers(pg)
 	if len(stickers) == 0 {
 		replyNormal(s, m, "Cannot find the sticker you're looking for. Find the sticker name with `"+commandPrefix+"/list` command.")
 		return
 	}
 	if len(stickers) > 1 {
 		matchedStr := sticker.StickerListString(stickers)
-		replyNormal(s, m, "Found more than one stickers! Please provide more specific prefix. Matched: "+matchedStr)
+		replyNormal(s, m, "Found more than one stickers! Please provide more specific patterns. Matched: "+matchedStr)
 		return
 	}
 
@@ -247,8 +270,8 @@ func buildUserHelp() string {
 		"/help",
 		"Show this message.",
 	}, {
-		"/list [<prefix>]",
-		"If `<prefix>` is not given, list all stickers; Otherwise, list all stickers matching `<prefix>`.",
+		"/list [<pattern>...[ / <pattern>...]...]",
+		"If no pattern is given, list all stickers; Otherwise, list all stickers matching any group of patterns. Groups are separated with slashes.",
 	}, {
 		"/add <sticker_name> <URL>",
 		"Download and save the image at `<URL>` as a new sticker.",
@@ -256,11 +279,11 @@ func buildUserHelp() string {
 		"/rename <sticker_name> <new_sticker_name>",
 		"Move the sticker on `<sticker_name>` to `<new_sticker_name>`.",
 	}, {
-		"/random <sticker_prefix>...",
-		"All stickers that match the prefixes will be collected, and a random one will be post.",
+		"/random [<pattern>...[ / <pattern>...]...]",
+		"All stickers that match any group of patterns will be collected, and a random one will be post. Groups are separated with slashes.",
 	}, {
-		"<sticker_name>",
-		"A command that does not match any of the above is considered a sticker name. Use `" + commandPrefix + "/list` to view the available stickers.",
+		"<pattern>...",
+		"A command that does not start with slash is considered as patterns. A sticker is posted if it's the only one that matches the patterns. Use `/list` command to view the available stickers.",
 	}} {
 		sb.WriteString("`")
 		sb.WriteString(commandPrefix)
@@ -339,7 +362,7 @@ func main() {
 		// Non-command case.
 		if command[0][0] != '/' {
 			if coolDown == 0 || cd.CoolDown(coolDown, m.ChannelID) {
-				handleSticker(s, m, sm, command[0])
+				handleSticker(s, m, sm, command)
 			}
 			return
 		}
