@@ -31,26 +31,32 @@ go run discordsticker -help
 By default the program uses the bot token in the file `token`,
 and reads the stickers in `resources/`.
 
-Under `resources/`, there should be directories denoting the sticker groups;
-Inside each group, there should be stickers.
+Stickers are placed under `resources/`.
+Sub-directories are acceptable but not recommended;
+Support of sub-directories could be deprecated in the future.
 
 The bot reads the messages with specific prefix (by default `!!`)
 from DMs or guilds.
-If the message is not a keyword, the bot finds out the sticker
-which's name starts with the message, and post the sticker.
+If the message doesn't start with `/`, the bot finds out the sticker
+which's name contains with the patterns, and post the sticker.
+Note that the file extensions are omitted,
+and all filesystem separators or slashes in the sticker name will be replaced with `-`.
 
-For example, with the file structure below, users can:
-* Post `dog.png` with `!!d`, `!!do`, or `!!dog`. Because no other sitcker's name starts with d.
-* Post `cat.png` with `!!cat`, or with group name `!!animals/c` or even `!!a/c`.
+## Example
+
+With the file structure below, users:
+* Can post `sakura-miko.png` with `!!miko`, `!!sakura`, etc. As long as they are not the contained by other names.
+* Cannot post any stickers with `!!kami` because there are three stickers matching the search.
+* Can post `ookami-mio.png` with `!!kami mio`, `!!ookami`, etc.
+* Can randomly post one of `sakura-miko.png` and `shirakami-fubuki.png` with `!!/random ra`.
 ```
-resources -- animals -- cat.png
-          |          `- dog.png
+resources -- sakura-miko.png
           |
-          |- fruits -- apple.png
-          |         `- banana.png
+          |- ookami-mio.png
           |
-          `- vehicles -- bike.png
-                      `- car.png
+          |- shirakami-fubuki.png
+          |
+          `- inukami-korone.png
 ```
 
-Users can get more info with `!!help`.
+Users can get more info with `!!/help`.
