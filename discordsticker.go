@@ -19,6 +19,16 @@ import (
 
 const maxMsgLen = 2000
 
+var (
+	// server flags
+	commandPrefix string
+	tokenFilePath string
+	resourcePath  string
+	coolDown      time.Duration
+
+	userHelp string
+)
+
 // replyNormal sends message back to the channel from where we got the message.
 func replyNormal(s *discordgo.Session, m *discordgo.MessageCreate, reply string) {
 	if _, err := s.ChannelMessageSend(m.ChannelID, reply); err != nil {
@@ -90,7 +100,7 @@ func quotedMessagesToTrunks(lines []string) []string {
 	return ret
 }
 
-func handleList(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, commandPrefix string, command []string) {
+func handleList(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, command []string) {
 	sm.RLock()
 	defer sm.RUnlock()
 
@@ -121,7 +131,7 @@ func handleList(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Ma
 	}
 }
 
-func handleAdd(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, commandPrefix string, command []string) {
+func handleAdd(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, command []string) {
 	sm.Lock()
 	defer sm.Unlock()
 
@@ -142,7 +152,7 @@ func handleAdd(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Man
 	replyNormal(s, m, "Done!")
 }
 
-func handleRename(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, commandPrefix string, command []string) {
+func handleRename(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, command []string) {
 	sm.Lock()
 	defer sm.Unlock()
 
@@ -163,7 +173,7 @@ func handleRename(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.
 	replyNormal(s, m, "Done!")
 }
 
-func handleRandom(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, commandPrefix string, stickerIDs []string) {
+func handleRandom(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, stickerIDs []string) {
 	sm.RLock()
 	defer sm.RUnlock()
 
@@ -194,7 +204,7 @@ func handleRandom(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.
 	}
 }
 
-func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, commandPrefix, stickerID string) {
+func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, stickerID string) {
 	sm.RLock()
 	defer sm.RUnlock()
 
@@ -224,7 +234,7 @@ func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker
 	}
 }
 
-func userHelp(commandPrefix string) string {
+func buildUserHelp() string {
 	sb := strings.Builder{}
 	sb.WriteString("Please send commands with the prefix `")
 	sb.WriteString(commandPrefix)
@@ -274,12 +284,12 @@ func main() {
 		flag.PrintDefaults()
 	}
 
-	var (
-		commandPrefix = *commandPrefixPtr
-		tokenFilePath = *tokenFilePathPtr
-		resourcePath  = *resourcePathPtr
-		coolDown      = *coolDownPtr
-	)
+	commandPrefix = *commandPrefixPtr
+	tokenFilePath = *tokenFilePathPtr
+	resourcePath = *resourcePathPtr
+	coolDown = *coolDownPtr
+
+	userHelp = buildUserHelp()
 
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile | log.Lmsgprefix)
 
@@ -308,8 +318,6 @@ func main() {
 
 	cd := utils.NewCoolDownCounter()
 
-	userHelpStr := userHelp(commandPrefix)
-
 	s.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
 		// Ignore all messages created by the bot itself.
 		if m.Author.ID == s.State.User.ID {
@@ -328,20 +336,20 @@ func main() {
 
 		switch command[0] {
 		case "help":
-			replyDM(s, m, userHelpStr)
+			replyDM(s, m, userHelp)
 		case "list":
-			handleList(s, m, sm, commandPrefix, command[1:])
+			handleList(s, m, sm, command[1:])
 		case "add":
-			handleAdd(s, m, sm, commandPrefix, command[1:])
+			handleAdd(s, m, sm, command[1:])
 		case "rename":
-			handleRename(s, m, sm, commandPrefix, command[1:])
+			handleRename(s, m, sm, command[1:])
 		case "random":
 			if coolDown == 0 || cd.CoolDown(coolDown, m.ChannelID) {
-				handleRandom(s, m, sm, commandPrefix, command[1:])
+				handleRandom(s, m, sm, command[1:])
 			}
 		default: // Consider the command name as the sticker ID.
 			if coolDown == 0 || cd.CoolDown(coolDown, m.ChannelID) {
-				handleSticker(s, m, sm, commandPrefix, command[0])
+				handleSticker(s, m, sm, command[0])
 			}
 		}
 	})
