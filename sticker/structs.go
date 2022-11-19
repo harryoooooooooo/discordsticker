@@ -5,13 +5,12 @@ import (
 )
 
 type Sticker struct {
-	name    string
-	path    string
-	uniqLen int
+	name string
+	path string
 }
 
-func (s *Sticker) StringWithHint() string {
-	return withHint(s.name, s.uniqLen)
+func (s *Sticker) Name() string {
+	return s.name
 }
 
 func (s *Sticker) Path() string {

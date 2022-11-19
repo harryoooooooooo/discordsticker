@@ -1,90 +1,28 @@
 package sticker
 
 import (
-	"fmt"
 	"strings"
 )
 
 // StickerListString composes the report of a list of stickers.
-// The names are shown with hint, quoted with "`", and separated by ",".
-// Example: "`pa[bc]`, `pd[ef]`, `q[abc]`"
+// The names are quoted with "`", and separated by ", ".
+// Example: "`pabc`, `pdef`, `qabc`"
 func StickerListString(stickers []*Sticker) string {
 	moreThanTen := false
 	if len(stickers) > 10 {
 		stickers = stickers[:10]
 		moreThanTen = true
 	}
-	var matchedNames []string
+	var names []string
 	for _, s := range stickers {
-		matchedNames = append(matchedNames, s.StringWithHint())
+		names = append(names, s.Name())
 	}
 	sb := strings.Builder{}
 	sb.WriteString("`")
-	sb.WriteString(strings.Join(matchedNames, "`, `"))
+	sb.WriteString(strings.Join(names, "`, `"))
 	sb.WriteString("`")
 	if moreThanTen {
 		sb.WriteString("... and more")
 	}
 	return sb.String()
-}
-
-// withHint returns the string with the optional part is hinted.
-// Note that the string is processed as []rune.
-// Sample input:
-// 	s = "abcde", uniqLen = 3
-// Sample output:
-// 	"abc[de]"
-func withHint(s string, uniqLen int) string {
-	rs := []rune(s)
-	if len(rs) == uniqLen {
-		return s
-	}
-	return fmt.Sprintf(
-		"%s[%s]",
-		string(rs[:uniqLen]),
-		string(rs[uniqLen:]),
-	)
-}
-
-func countUniqLenTwo(a, b string) int {
-	ra := []rune(a)
-	rb := []rune(b)
-	i := 0
-	for i < len(ra) && i < len(rb) && ra[i] == rb[i] {
-		i++
-	}
-	return i
-}
-
-type countUniqLenError struct {
-	str1 string
-	str2 string
-}
-
-func (e *countUniqLenError) Error() string {
-	return fmt.Sprintf("Found contained strings: %q vs %q", e.str1, e.str2)
-}
-
-// countUniqLen finds the unique prefix length among the whole slice for all strings.
-// countUniqLen returns only *countUniqLenError on failure.
-// An unique prefix means there is no other string has the same prefix.
-func countUniqLen(strs []string) ([]int, error) {
-	ret := make([]int, len(strs))
-	for i := 0; i < len(strs); i++ {
-		for j := i + 1; j < len(strs); j++ {
-			s := strs[i]
-			t := strs[j]
-			if s == t || strings.HasPrefix(s, t) || strings.HasPrefix(t, s) {
-				return nil, &countUniqLenError{str1: s, str2: t}
-			}
-			l := countUniqLenTwo(s, t) + 1
-			if ret[i] < l {
-				ret[i] = l
-			}
-			if ret[j] < l {
-				ret[j] = l
-			}
-		}
-	}
-	return ret, nil
 }
