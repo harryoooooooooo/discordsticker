@@ -85,6 +85,61 @@ func (h *messageHandler) postSticker(r io.Reader, ext string) error {
 	return err
 }
 
+type commandHandler struct {
+	s       *discordgo.Session
+	i       *discordgo.InteractionCreate
+	replied bool
+}
+
+func (h *commandHandler) reply(msg string, ephemeral bool) {
+	var flags discordgo.MessageFlags
+	if ephemeral {
+		flags = discordgo.MessageFlagsEphemeral
+	}
+	if h.replied {
+		if _, err := h.s.FollowupMessageCreate(
+			h.i.Interaction,
+			true,
+			&discordgo.WebhookParams{Content: msg, Flags: flags},
+		); err != nil {
+			log.Println("Failed to reply a followup message:", err)
+		}
+		return
+	}
+	h.replied = true
+	if err := h.s.InteractionRespond(h.i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{Content: msg, Flags: flags},
+	}); err != nil {
+		log.Println("Failed to reply:", err)
+	}
+}
+
+func (h *commandHandler) replyPrivate(msg string) {
+	h.reply(msg, true)
+}
+
+func (h *commandHandler) replyPublic(msg string) {
+	h.reply(msg, false)
+}
+
+func (h *commandHandler) postSticker(r io.Reader, ext string) error {
+	files := []*discordgo.File{{
+		Name:        "sticker" + ext,
+		ContentType: "image/" + ext[1:],
+		Reader:      r,
+	}}
+	if h.replied {
+		_, err := h.s.FollowupMessageCreate(h.i.Interaction, true, &discordgo.WebhookParams{Files: files})
+		return err
+	}
+	h.replied = true
+	return h.s.InteractionRespond(h.i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{Files: files},
+	})
+}
+
 func buildPatternGroups(arg string) [][]string {
 	var toks []string
 	for _, f := range strings.Fields(arg) {
@@ -183,7 +238,7 @@ func handleAdd(h handler, sm *sticker.Manager, name, url string) {
 		}
 		return
 	}
-	h.replyPublic("Done.")
+	h.replyPublic(fmt.Sprintf("Done. Added sticker: `%s`", name))
 }
 
 func handleRename(h handler, sm *sticker.Manager, name, newName string) {
@@ -198,7 +253,7 @@ func handleRename(h handler, sm *sticker.Manager, name, newName string) {
 		}
 		return
 	}
-	h.replyPublic("Done.")
+	h.replyPublic(fmt.Sprintf("Done. Renamed sticker: `%s` -> `%s`", name, newName))
 }
 
 func handleRandom(h handler, sm *sticker.Manager, patterns string) {
@@ -331,6 +386,7 @@ func main() {
 
 	var config struct {
 		Token         string
+		AppID         string
 		CommandPrefix string
 		CoolDown      int
 	}
@@ -444,6 +500,129 @@ func main() {
 			panic("Should not go here")
 		}
 	})
+
+	s.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		h := &commandHandler{s: s, i: i}
+		switch i.Type {
+		case discordgo.InteractionApplicationCommand:
+			if i.ApplicationCommandData().Name != "sticker" {
+				h.replyPrivate("Unsupported command, please contact the admin")
+				return
+			}
+			if len(i.ApplicationCommandData().Options) != 1 {
+				h.replyPrivate("Invalid command format, please contact the admin")
+				return
+			}
+
+			data := i.ApplicationCommandData().Options[0]
+
+			getOptionString := func(name string) string {
+				for _, o := range data.Options {
+					if o.Name == name {
+						return o.StringValue()
+					}
+				}
+				return ""
+			}
+
+			switch data.Name {
+			case "help":
+				handleHelp(h, true)
+			case "list":
+				handleList(h, sm, getOptionString("patterns"))
+			case "add":
+				handleAdd(h, sm, getOptionString("name"), getOptionString("url"))
+			case "rename":
+				handleRename(h, sm, getOptionString("name"), getOptionString("new_name"))
+			case "random":
+				if coolDown == 0 || cd.CoolDown(coolDown, i.ChannelID) {
+					handleRandom(h, sm, getOptionString("patterns"))
+				} else {
+					h.replyPublic("Cooling down.")
+				}
+			case "post":
+				if coolDown == 0 || cd.CoolDown(coolDown, i.ChannelID) {
+					handlePost(h, sm, getOptionString("pattern"))
+				} else {
+					h.replyPublic("Cooling down.")
+				}
+			default:
+				panic("Should not go here")
+			}
+		}
+	})
+
+	if _, err := s.ApplicationCommandCreate(config.AppID, "", &discordgo.ApplicationCommand{
+		Name:        "sticker",
+		Description: "Discord sticker command",
+		Options: []*discordgo.ApplicationCommandOption{{
+			Type:        discordgo.ApplicationCommandOptionSubCommand,
+			Name:        "post",
+			Description: "Post a sticker",
+			Options: []*discordgo.ApplicationCommandOption{{
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "pattern",
+				Required:    true,
+				Description: "The search pattern of the sticker",
+			}},
+		}, {
+			Type:        discordgo.ApplicationCommandOptionSubCommand,
+			Name:        "help",
+			Description: "Print the help info",
+		}, {
+			Type:        discordgo.ApplicationCommandOptionSubCommand,
+			Name:        "list",
+			Description: "Search and show the stickers",
+			Options: []*discordgo.ApplicationCommandOption{{
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "patterns",
+				Required:    false,
+				Description: "The search patterns separated by slashes",
+			}},
+		}, {
+			Type:        discordgo.ApplicationCommandOptionSubCommand,
+			Name:        "add",
+			Description: "Add a new sticker",
+			Options: []*discordgo.ApplicationCommandOption{{
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "name",
+				Required:    true,
+				Description: "Sticker name",
+			}, {
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "url",
+				Required:    true,
+				Description: "A link to download the sticker",
+			}},
+		}, {
+			Type:        discordgo.ApplicationCommandOptionSubCommand,
+			Name:        "rename",
+			Description: "Rename a sticker",
+			Options: []*discordgo.ApplicationCommandOption{{
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "name",
+				Required:    true,
+				Description: "Sticker name",
+			}, {
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "new_name",
+				Required:    true,
+				Description: "A link to download the sticker",
+			}},
+		}, {
+			Type:        discordgo.ApplicationCommandOptionSubCommand,
+			Name:        "random",
+			Description: "Randomly post a sticker form the search results",
+			Options: []*discordgo.ApplicationCommandOption{{
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "patterns",
+				Required:    true,
+				Description: "The search patterns separated by slashes",
+			}},
+		}},
+	}); err != nil {
+		log.Fatalln("Failed to create app command, err:", err)
+	}
 
 	readyCh := make(chan struct{}, 1)
 	s.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
