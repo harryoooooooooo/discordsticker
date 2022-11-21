@@ -1,5 +1,6 @@
 {
   "Token": "",
+  "AppID": "",
   "CommandPrefix": "!!",
   "CoolDown": 5
 }
