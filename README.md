@@ -28,8 +28,9 @@ go run discordsticker -help
 
 ## Usage
 
-By default the program uses the bot token in the file `token`,
+By default the program uses the bot token in the file `config.json`,
 and reads the stickers in `resources/`.
+See `config.json.example` for the supported configs.
 
 Stickers are placed under `resources/`.
 Sub-directories are acceptable but not recommended;
