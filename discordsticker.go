@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -25,23 +26,32 @@ var (
 	// server configs
 	commandPrefix string
 	coolDown      time.Duration
-
-	userHelp string
 )
 
-// replyNormal sends message back to the channel from where we got the message.
-func replyNormal(s *discordgo.Session, m *discordgo.MessageCreate, reply string) {
-	if _, err := s.ChannelMessageSend(m.ChannelID, reply); err != nil {
+type handler interface {
+	postSticker(poster io.Reader, ext string) error
+	replyPrivate(msg string)
+	replyPublic(msg string)
+}
+
+type messageHandler struct {
+	s *discordgo.Session
+	m *discordgo.MessageCreate
+}
+
+// replyPublic sends message back to the channel from where we got the message.
+func (h *messageHandler) replyPublic(msg string) {
+	if _, err := h.s.ChannelMessageSend(h.m.ChannelID, msg); err != nil {
 		log.Println("Failed to reply:", err)
 	}
 }
 
-// replyDM sends message as DM.
+// replyPrivate sends message as DM.
 // If the message was sent from a guild, only a done message will be sent to the guild.
-func replyDM(s *discordgo.Session, m *discordgo.MessageCreate, reply string) {
-	if m.GuildID == "" {
+func (h *messageHandler) replyPrivate(msg string) {
+	if h.m.GuildID == "" {
 		// Got command from DM, simple case.
-		if _, err := s.ChannelMessageSend(m.ChannelID, reply); err != nil {
+		if _, err := h.s.ChannelMessageSend(h.m.ChannelID, msg); err != nil {
 			log.Println("Failed to reply:", err)
 		}
 		return
@@ -49,30 +59,35 @@ func replyDM(s *discordgo.Session, m *discordgo.MessageCreate, reply string) {
 
 	// Got command from guild but we replies with DM. The function informs guild on failure.
 	informFailure := func() {
-		if _, err := s.ChannelMessageSend(m.ChannelID, "Failed to send you a DM!"); err != nil {
+		if _, err := h.s.ChannelMessageSend(h.m.ChannelID, "Failed to send you a DM!"); err != nil {
 			log.Println("Failed to inform failure to guild:", err)
 		}
 	}
 
-	userChannel, err := s.UserChannelCreate(m.Author.ID)
+	userChannel, err := h.s.UserChannelCreate(h.m.Author.ID)
 	if err != nil {
 		log.Println("Failed to create a DM channel:", err)
 		informFailure()
 		return
 	}
-	if _, err := s.ChannelMessageSend(userChannel.ID, reply); err != nil {
+	if _, err := h.s.ChannelMessageSend(userChannel.ID, msg); err != nil {
 		log.Println("Failed to reply:", err)
 		informFailure()
 		return
 	}
-	if _, err := s.ChannelMessageSend(m.ChannelID, "Direct message is sent!"); err != nil {
+	if _, err := h.s.ChannelMessageSend(h.m.ChannelID, "Direct message is sent!"); err != nil {
 		log.Println("Failed to send done message to guild:", err)
 	}
 }
 
-func buildPatternGroups(fields []string) [][]string {
+func (h *messageHandler) postSticker(r io.Reader, ext string) error {
+	_, err := h.s.ChannelFileSend(h.m.ChannelID, "sticker"+ext, r)
+	return err
+}
+
+func buildPatternGroups(arg string) [][]string {
 	var toks []string
-	for _, f := range fields {
+	for _, f := range strings.Fields(arg) {
 		for _, s := range strings.SplitAfter(f, "/") {
 			if s == "" {
 				continue
@@ -130,19 +145,19 @@ func quotedMessagesToTrunks(lines []string) []string {
 	return ret
 }
 
-func handleList(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, command []string) {
+func handleList(h handler, sm *sticker.Manager, patterns string) {
 	sm.RLock()
 	defer sm.RUnlock()
 
 	var ss []*sticker.Sticker
-	if len(command) == 0 {
+	if patterns == "" {
 		ss = sm.Stickers()
 	} else {
-		ss = sm.MatchedStickers(buildPatternGroups(command))
+		ss = sm.MatchedStickers(buildPatternGroups(patterns))
 	}
 
 	if len(ss) == 0 {
-		replyDM(s, m, "No matched stickers found!")
+		h.replyPrivate("No matched stickers found!")
 		return
 	}
 
@@ -152,60 +167,48 @@ func handleList(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Ma
 	}
 
 	for _, msg := range quotedMessagesToTrunks(msgs) {
-		replyDM(s, m, msg)
+		h.replyPrivate(msg)
 	}
 }
 
-func handleAdd(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, command []string) {
+func handleAdd(h handler, sm *sticker.Manager, name, url string) {
 	sm.Lock()
 	defer sm.Unlock()
 
-	if len(command) != 2 {
-		replyNormal(s, m, "Invalid format. Expect `"+commandPrefix+"/add <sticker_name> <URL>`. Try again!")
-		return
-	}
-
-	if err := sm.AddSticker(command[0], command[1]); err != nil {
+	if err := sm.AddSticker(name, url); err != nil {
 		if err != sticker.UninformableErr {
-			replyNormal(s, m, err.Error())
+			h.replyPublic(err.Error())
 		} else {
-			replyNormal(s, m, "Something goes wrong here! Please contact the admin.")
+			h.replyPublic("Something goes wrong here! Please contact the admin.")
 		}
 		return
 	}
-
-	replyNormal(s, m, "Done!")
+	h.replyPublic("Done.")
 }
 
-func handleRename(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, command []string) {
+func handleRename(h handler, sm *sticker.Manager, name, newName string) {
 	sm.Lock()
 	defer sm.Unlock()
 
-	if len(command) != 2 {
-		replyNormal(s, m, "Invalid format. Expect `"+commandPrefix+"/rename <sticker_name> <new_sticker_name>. Try again!`")
-		return
-	}
-
-	if err := sm.RenameSticker(command[0], command[1]); err != nil {
+	if err := sm.RenameSticker(name, newName); err != nil {
 		if err != sticker.UninformableErr {
-			replyNormal(s, m, err.Error())
+			h.replyPublic(err.Error())
 		} else {
-			replyNormal(s, m, "Something goes wrong here! Please contact the admin.")
+			h.replyPublic("Something goes wrong here! Please contact the admin.")
 		}
 		return
 	}
-
-	replyNormal(s, m, "Done!")
+	h.replyPublic("Done.")
 }
 
-func handleRandom(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, command []string) {
+func handleRandom(h handler, sm *sticker.Manager, patterns string) {
 	sm.RLock()
 	defer sm.RUnlock()
 
-	stickers := sm.MatchedStickers(buildPatternGroups(command))
+	stickers := sm.MatchedStickers(buildPatternGroups(patterns))
 
 	if len(stickers) == 0 {
-		replyNormal(s, m, "Cannot find any matched sticker. Find the sticker names with `"+commandPrefix+"/list` command.")
+		h.replyPublic("Cannot find any matched sticker. Find the sticker names with `list` command.")
 		return
 	}
 
@@ -214,89 +217,105 @@ func handleRandom(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.
 	r, err := os.Open(sticker.Path())
 	if err != nil {
 		log.Println("Failed to open the image:", err)
-		replyNormal(s, m, "Something goes wrong here! Please contact the admin.")
+		h.replyPublic("Something goes wrong here! Please contact the admin.")
 		return
 	}
 	defer r.Close()
 
-	if _, err := s.ChannelFileSend(m.ChannelID, "sticker"+stickers[0].Ext(), r); err != nil {
+	if err := h.postSticker(r, sticker.Ext()); err != nil {
 		log.Println("Failed to post sticker:", err)
-		replyNormal(s, m, "Failed to post sticker!")
+		h.replyPublic("Something goes wrong here! Please contact the admin.")
 		return
 	}
 }
 
-func handleSticker(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Manager, command []string) {
+func handlePost(h handler, sm *sticker.Manager, pattern string) {
 	sm.RLock()
 	defer sm.RUnlock()
 
-	pg := buildPatternGroups(command)
+	pg := buildPatternGroups(pattern)
 	if len(pg) > 1 {
-		replyNormal(s, m, "List command should not contain slash ('/').")
+		h.replyPublic("Post command should not contain slash (`/`).")
 		return
 	}
 
 	stickers := sm.MatchedStickers(pg)
 	if len(stickers) == 0 {
-		replyNormal(s, m, "Cannot find the sticker you're looking for. Find the sticker name with `"+commandPrefix+"/list` command.")
+		h.replyPublic("Cannot find the sticker you're looking for. Find the sticker name with `list` command.")
 		return
 	}
 	if len(stickers) > 1 {
 		matchedStr := sticker.StickerListString(stickers)
-		replyNormal(s, m, "Found more than one stickers! Please provide more specific patterns. Matched: "+matchedStr)
+		h.replyPublic("Found more than one stickers! Please provide more specific patterns. Matched: " + matchedStr)
 		return
 	}
 
 	r, err := os.Open(stickers[0].Path())
 	if err != nil {
 		log.Println("Failed to open the image:", err)
-		replyNormal(s, m, "Something goes wrong here! Please contact the admin.")
+		h.replyPublic("Something goes wrong here! Please contact the admin.")
 		return
 	}
 	defer r.Close()
 
-	if _, err := s.ChannelFileSend(m.ChannelID, "sticker"+stickers[0].Ext(), r); err != nil {
+	if err := h.postSticker(r, stickers[0].Ext()); err != nil {
 		log.Println("Failed to post sticker:", err)
-		replyNormal(s, m, "Failed to post sticker!")
+		h.replyPublic("Something goes wrong here! Please contact the admin.")
 		return
 	}
 }
 
-func buildUserHelp() string {
+func handleHelp(h handler, appCommand bool) {
 	sb := strings.Builder{}
-	sb.WriteString("Please send commands with the prefix `")
-	sb.WriteString(commandPrefix)
-	sb.WriteString("`. Available commands:\n\n")
+	if !appCommand {
+		sb.WriteString("Please send commands with the prefix `")
+		sb.WriteString(commandPrefix)
+		sb.WriteString("`.\n")
+	}
+	sb.WriteString("Available commands:\n\n")
 	for _, t := range []struct {
 		command string
+		args    string
 		desc    string
 	}{{
-		"/help",
+		"help", "",
 		"Show this message.",
 	}, {
-		"/list [<pattern>...[ / <pattern>...]...]",
+		"list", "[<pattern>...[ / <pattern>...]...]",
 		"If no pattern is given, list all stickers; Otherwise, list all stickers matching any group of patterns. Groups are separated with slashes.",
 	}, {
-		"/add <sticker_name> <URL>",
+		"add", "<sticker_name> <URL>",
 		"Download and save the image at `<URL>` as a new sticker.",
 	}, {
-		"/rename <sticker_name> <new_sticker_name>",
+		"rename", "<sticker_name> <new_sticker_name>",
 		"Move the sticker on `<sticker_name>` to `<new_sticker_name>`.",
 	}, {
-		"/random [<pattern>...[ / <pattern>...]...]",
+		"random", "[<pattern>...[ / <pattern>...]...]",
 		"All stickers that match any group of patterns will be collected, and a random one will be post. Groups are separated with slashes.",
 	}, {
-		"<pattern>...",
-		"A command that does not start with slash is considered as patterns. A sticker is posted if it's the only one that matches the patterns. Use `/list` command to view the available stickers.",
+		"post", "<pattern>...",
+		"A command that does not start with slash is considered as patterns. A sticker is posted if it's the only one that matches the patterns. Use `list` command to view the available stickers.",
 	}} {
 		sb.WriteString("`")
-		sb.WriteString(commandPrefix)
-		sb.WriteString(t.command)
+		if appCommand {
+			sb.WriteString("/sticker ")
+			sb.WriteString(t.command)
+			sb.WriteString(" ")
+			sb.WriteString(t.args)
+		} else {
+			sb.WriteString(commandPrefix)
+			if t.command != "post" {
+				sb.WriteString("/")
+				sb.WriteString(t.command)
+				sb.WriteString(" ")
+			}
+			sb.WriteString(t.args)
+		}
 		sb.WriteString("`\n")
 		sb.WriteString(t.desc)
 		sb.WriteString("\n\n")
 	}
-	return sb.String()
+	h.replyPrivate(sb.String())
 }
 
 func main() {
@@ -325,8 +344,6 @@ func main() {
 
 	commandPrefix = config.CommandPrefix
 	coolDown = time.Duration(config.CoolDown) * time.Second
-
-	userHelp = buildUserHelp()
 
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile | log.Lmsgprefix)
 
@@ -361,54 +378,67 @@ func main() {
 			return
 		}
 
-		command := strings.Fields(m.Content[len(commandPrefix):])
-		if len(command) == 0 {
-			replyDM(s, m, userHelp)
-			return
+		h := &messageHandler{s: s, m: m}
+
+		command := strings.TrimSpace(m.Content[len(commandPrefix):])
+		if command == "" {
+			command = "/help"
 		}
 
 		// Non-command case.
-		if command[0][0] != '/' {
+		if command[0] != '/' {
 			if coolDown == 0 || cd.CoolDown(coolDown, m.ChannelID) {
-				handleSticker(s, m, sm, command)
+				handlePost(h, sm, command)
+			} else {
+				h.replyPublic("Cooling down.")
 			}
 			return
 		}
 
+		command, arg, _ := strings.Cut(command[1:], " ")
+
 		var matchedCommands []string
 		for _, comm := range []string{"help", "list", "add", "rename", "random"} {
-			if strings.HasPrefix(comm, command[0][1:]) {
+			if strings.HasPrefix(comm, command) {
 				matchedCommands = append(matchedCommands, comm)
 			}
 		}
-
 		if len(matchedCommands) > 1 {
 			for i, comm := range matchedCommands {
 				matchedCommands[i] = fmt.Sprintf("`%s/%s`", commandPrefix, comm)
 			}
-			replyNormal(s, m, "Matched more then 1 commands: "+strings.Join(matchedCommands, ", "))
+			h.replyPublic("Matched more then 1 commands: " + strings.Join(matchedCommands, ", "))
 			return
 		}
-
 		if len(matchedCommands) < 1 {
-			replyDM(s, m, fmt.Sprintf("Unknown command `%s%s`\n", commandPrefix, command[0])+userHelp)
+			h.replyPrivate(fmt.Sprintf("Unknown command `%s/%s`. Run `%s/help` to see the supported commands.\n", commandPrefix, command, commandPrefix))
 			return
 		}
-
-		command = command[1:]
 
 		switch matchedCommands[0] {
 		case "help":
-			replyDM(s, m, userHelp)
+			handleHelp(h, false)
 		case "list":
-			handleList(s, m, sm, command)
+			handleList(h, sm, arg)
 		case "add":
-			handleAdd(s, m, sm, command)
+			args := strings.Fields(arg)
+			if len(args) != 2 {
+				h.replyPublic("Invalid format. Expect `" + commandPrefix + "/add <sticker_name> <URL>`.")
+				return
+			}
+			handleAdd(h, sm, args[0], args[1])
 		case "rename":
-			handleRename(s, m, sm, command)
+			args := strings.Fields(arg)
+			if len(args) != 2 {
+				h.replyPublic("Invalid format. Expect `" + commandPrefix + "/rename <sticker_name> <new_sticker_name>.`")
+				return
+			}
+			handleRename(h, sm, args[0], args[1])
 		case "random":
 			if coolDown == 0 || cd.CoolDown(coolDown, m.ChannelID) {
-				handleRandom(s, m, sm, command)
+				handleRandom(h, sm, arg)
+			} else {
+				h.replyPublic("Cooling down.")
 			}
 		default:
 			panic("Should not go here")
