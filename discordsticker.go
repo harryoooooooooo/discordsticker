@@ -415,14 +415,24 @@ func main() {
 		}
 	})
 
+	readyCh := make(chan struct{}, 1)
+	s.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
+		readyCh <- struct{}{}
+	})
+
 	s.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsDirectMessages
 
-	err = s.Open()
-	if err != nil {
+	if err := s.Open(); err != nil {
 		log.Fatalln("Failed to open a connection:", err)
 	}
 	defer s.Close()
 
+	select {
+	case <-readyCh:
+	case <-time.After(10 * time.Second):
+		log.Println("Failed to wait for the BOT ready after 10sec timeout")
+		return
+	}
 	log.Println("Bot is running now. Press CTRL-C to exit.")
 	shutdownCh := make(chan os.Signal, 1)
 	signal.Notify(shutdownCh, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
