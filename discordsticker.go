@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -91,7 +92,7 @@ type commandHandler struct {
 	replied bool
 }
 
-func (h *commandHandler) reply(msg string, ephemeral bool) {
+func (h *commandHandler) reply(msg string, ephemeral bool, components []discordgo.MessageComponent) {
 	var flags discordgo.MessageFlags
 	if ephemeral {
 		flags = discordgo.MessageFlagsEphemeral
@@ -100,7 +101,7 @@ func (h *commandHandler) reply(msg string, ephemeral bool) {
 		if _, err := h.s.FollowupMessageCreate(
 			h.i.Interaction,
 			true,
-			&discordgo.WebhookParams{Content: msg, Flags: flags},
+			&discordgo.WebhookParams{Content: msg, Components: components, Flags: flags},
 		); err != nil {
 			log.Println("Failed to reply a followup message:", err)
 		}
@@ -109,18 +110,18 @@ func (h *commandHandler) reply(msg string, ephemeral bool) {
 	h.replied = true
 	if err := h.s.InteractionRespond(h.i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{Content: msg, Flags: flags},
+		Data: &discordgo.InteractionResponseData{Content: msg, Components: components, Flags: flags},
 	}); err != nil {
 		log.Println("Failed to reply:", err)
 	}
 }
 
 func (h *commandHandler) replyPrivate(msg string) {
-	h.reply(msg, true)
+	h.reply(msg, true, nil)
 }
 
 func (h *commandHandler) replyPublic(msg string) {
-	h.reply(msg, false)
+	h.reply(msg, false, nil)
 }
 
 func (h *commandHandler) postSticker(r io.Reader, ext string) error {
@@ -284,7 +285,7 @@ func handleRandom(h handler, sm *sticker.Manager, patterns string) {
 	}
 }
 
-func handlePost(h handler, sm *sticker.Manager, pattern string) {
+func handlePost(h handler, sm *sticker.Manager, pattern string, handleMulti func([]*sticker.Sticker)) {
 	sm.RLock()
 	defer sm.RUnlock()
 
@@ -300,8 +301,12 @@ func handlePost(h handler, sm *sticker.Manager, pattern string) {
 		return
 	}
 	if len(stickers) > 1 {
-		matchedStr := sticker.StickerListString(stickers)
-		h.replyPublic("Found more than one stickers! Please provide more specific patterns. Matched: " + matchedStr)
+		if handleMulti != nil {
+			handleMulti(stickers)
+		} else {
+			matchedStr := sticker.StickerListString(stickers)
+			h.replyPublic("Found more than one stickers! Please provide more specific patterns. Matched: " + matchedStr)
+		}
 		return
 	}
 
@@ -444,7 +449,7 @@ func main() {
 		// Non-command case.
 		if command[0] != '/' {
 			if coolDown == 0 || cd.CoolDown(coolDown, m.ChannelID) {
-				handlePost(h, sm, command)
+				handlePost(h, sm, command, nil)
 			} else {
 				h.replyPublic("Cooling down.")
 			}
@@ -541,13 +546,87 @@ func main() {
 					h.replyPublic("Cooling down.")
 				}
 			case "post":
-				if coolDown == 0 || cd.CoolDown(coolDown, i.ChannelID) {
-					handlePost(h, sm, getOptionString("pattern"))
-				} else {
+				if coolDown != 0 && !cd.CoolDown(coolDown, i.ChannelID) {
 					h.replyPublic("Cooling down.")
+					return
 				}
+				handlePost(h, sm, getOptionString("pattern"), func(ss []*sticker.Sticker) {
+					const (
+						maxRowCount    = 5
+						maxColumnCount = 5
+					)
+					var buttons []discordgo.MessageComponent
+					for i, s := range ss {
+						if i%2 == 0 {
+							buttons = append(buttons, discordgo.Button{
+								Label:    s.Name(),
+								Style:    discordgo.PrimaryButton,
+								Disabled: false,
+								CustomID: s.Path(),
+							})
+						} else {
+							buttons = append(buttons, discordgo.Button{
+								Label:    s.Name(),
+								Style:    discordgo.SecondaryButton,
+								Disabled: false,
+								CustomID: s.Path(),
+							})
+						}
+					}
+					for compBegin := 0; compBegin < len(buttons); compBegin += maxRowCount * maxColumnCount {
+						compEnd := compBegin + maxRowCount*maxColumnCount
+						if compEnd > len(buttons) {
+							compEnd = len(buttons)
+						}
+						content := fmt.Sprintf("Showing %d ~ %d matched stickers:", compBegin+1, compEnd)
+						var components []discordgo.MessageComponent
+						for rowBegin := compBegin; rowBegin < compEnd; rowBegin += maxColumnCount {
+							rowEnd := rowBegin + maxColumnCount
+							if rowEnd > compEnd {
+								rowEnd = compEnd
+							}
+							components = append(components, discordgo.ActionsRow{Components: buttons[rowBegin:rowEnd]})
+						}
+						h.reply(content, true, components)
+					}
+					cd.RemoveCoolDown(i.ChannelID)
+				})
 			default:
 				panic("Should not go here")
+			}
+		case discordgo.InteractionMessageComponent:
+			if coolDown != 0 && !cd.CoolDown(coolDown, i.ChannelID) {
+				h.replyPrivate("Cooling down.")
+				return
+			}
+			path := i.MessageComponentData().CustomID
+			r, err := os.Open(path)
+			if err != nil {
+				log.Println("Failed to open the image:", err)
+				h.replyPrivate("Something goes wrong here! Please contact the admin.")
+				return
+			}
+			defer r.Close()
+			ext := filepath.Ext(path)
+			content := ""
+			if i.Member != nil {
+				content = i.Member.Mention() + " posted:"
+			}
+			if err := s.InteractionRespond(h.i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: content,
+					Files: []*discordgo.File{{
+						Name:        "sticker" + ext,
+						ContentType: "image/" + ext[1:],
+						Reader:      r,
+					}},
+					AllowedMentions: &discordgo.MessageAllowedMentions{},
+				},
+			}); err != nil {
+				log.Println("Failed to post sticker:", err)
+				h.replyPrivate("Something goes wrong here! Please contact the admin.")
+				return
 			}
 		}
 	})
