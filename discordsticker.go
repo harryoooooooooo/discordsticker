@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -21,10 +22,8 @@ import (
 const maxMsgLen = 2000
 
 var (
-	// server flags
+	// server configs
 	commandPrefix string
-	tokenFilePath string
-	resourcePath  string
 	coolDown      time.Duration
 
 	userHelp string
@@ -302,10 +301,8 @@ func buildUserHelp() string {
 
 func main() {
 	var (
-		commandPrefixPtr = flag.String("command-prefix", "!!", "The prefix for the users to trigger the bot.")
-		tokenFilePathPtr = flag.String("token-file", "token", "The file that contains the bot token.")
-		resourcePathPtr  = flag.String("resource-path", "resources", "The root directory of the resources. Each directory in it will become the group name.")
-		coolDownPtr      = flag.Duration("cool-dowm", 5*time.Second, "The cool down interval for each channel to post a sticker (including 'random' command).")
+		resourcePathPtr   = flag.String("resource-path", "resources", "The root directory of the resources. Each directory in it will become the group name.")
+		configFilePathPtr = flag.String("config-file", "config.json", "The JSON format configuration file. See config.json.example for the supported configs.")
 	)
 
 	flag.Parse()
@@ -313,34 +310,40 @@ func main() {
 		flag.PrintDefaults()
 	}
 
-	commandPrefix = *commandPrefixPtr
-	tokenFilePath = *tokenFilePathPtr
-	resourcePath = *resourcePathPtr
-	coolDown = *coolDownPtr
+	var config struct {
+		Token         string
+		CommandPrefix string
+		CoolDown      int
+	}
+	configBtyes, err := ioutil.ReadFile(*configFilePathPtr)
+	if err != nil {
+		log.Fatalln("Failed to read the config file:", err)
+	}
+	if err := json.Unmarshal(configBtyes, &config); err != nil {
+		log.Fatalln("Failed to unmarshal the config file:", err)
+	}
+
+	commandPrefix = config.CommandPrefix
+	coolDown = time.Duration(config.CoolDown) * time.Second
 
 	userHelp = buildUserHelp()
 
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile | log.Lmsgprefix)
 
 	log.Println("Starting...")
-	log.Println("\tcommand prefix     =", commandPrefix)
-	log.Println("\ttoken file         =", tokenFilePath)
-	log.Println("\tresource directory =", resourcePath)
-	log.Println("\tcool down interval =", coolDown)
+	log.Println("\tresource directory =", *resourcePathPtr)
+	log.Println("\tconfig file        =", *configFilePathPtr)
+	log.Println("\t\tcommand prefix     =", commandPrefix)
+	log.Println("\t\tcool down interval =", coolDown)
 
 	rand.Seed(time.Now().UnixNano())
 
-	sm, err := sticker.NewManager(resourcePath)
+	sm, err := sticker.NewManager(*resourcePathPtr)
 	if err != nil {
 		log.Fatalln("Failed to collect the sticker info:", err)
 	}
 
-	token, err := ioutil.ReadFile(tokenFilePath)
-	if err != nil {
-		log.Fatalln("Failed to read the token:", err)
-	}
-
-	s, err := discordgo.New("Bot " + strings.TrimSpace(string(token)))
+	s, err := discordgo.New("Bot " + strings.TrimSpace(string(config.Token)))
 	if err != nil {
 		log.Fatalln("Failed to create Discord session:", err)
 	}
