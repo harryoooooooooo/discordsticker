@@ -43,11 +43,21 @@ which's name contains with the patterns, and post the sticker.
 Note that the file extensions are omitted,
 and all filesystem separators or slashes in the sticker name will be replaced with `-`.
 
+Start from v2.1 the bot supports the standard Discord command `/sticker <sub_command>`.
+The equivalent command of the original `!!<sticker_name>` is `/sticker post <sticker_name>`,
+and the other commands just keep the same name: `!!/<command> <args...>` is `/sticker <command> <args...>`.
+
+One significant different between `!!` prefix and Discord command is that the `/sticker post`
+command shows the buttons to the user when there are multiple matched stickers,
+and the user is able to post the stickers with simple clicks.
+This is handy since users won't have to re-type the sticker patterns.
+
 ## Example
 
 With the file structure below, users:
-* Can post `sakura-miko.png` with `!!miko`, `!!sakura`, etc. As long as they are not the contained by other names.
+* Can post `sakura-miko.png` with `!!miko`, `!!sakura`, etc. As long as they are not contained by other names.
 * Cannot post any stickers with `!!kami` because there are three stickers matching the search.
+  * However, with `/sticker post kami` command the 3 matched stickers will be shown as buttons and you can click any one to post.
 * Can post `ookami-mio.png` with `!!kami mio`, `!!ookami`, etc.
 * Can randomly post one of `sakura-miko.png` and `shirakami-fubuki.png` with `!!/random ra`.
 ```
@@ -60,4 +70,4 @@ resources -- sakura-miko.png
           `- inukami-korone.png
 ```
 
-Users can get more info with `!!/help`.
+Users can get more info with `!!/help` or `/sticker help`.
