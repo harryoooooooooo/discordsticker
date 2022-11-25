@@ -142,6 +142,11 @@ func handleList(s *discordgo.Session, m *discordgo.MessageCreate, sm *sticker.Ma
 		ss = sm.MatchedStickers(buildPatternGroups(command))
 	}
 
+	if len(ss) == 0 {
+		replyDM(s, m, "No matched stickers found!")
+		return
+	}
+
 	msgs := make([]string, len(ss))
 	for i, s := range ss {
 		msgs[i] = s.Name()
