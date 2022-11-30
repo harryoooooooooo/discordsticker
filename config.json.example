@@ -2,5 +2,6 @@
   "Token": "",
   "AppID": "",
   "CommandPrefix": "!!",
-  "CoolDown": 5
+  "CoolDown": 5,
+  "CaseSensitive": false
 }

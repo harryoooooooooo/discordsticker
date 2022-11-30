@@ -394,6 +394,7 @@ func main() {
 		AppID         string
 		CommandPrefix string
 		CoolDown      int
+		CaseSensitive bool
 	}
 	configBtyes, err := ioutil.ReadFile(*configFilePathPtr)
 	if err != nil {
@@ -413,10 +414,11 @@ func main() {
 	log.Println("\tconfig file        =", *configFilePathPtr)
 	log.Println("\t\tcommand prefix     =", commandPrefix)
 	log.Println("\t\tcool down interval =", coolDown)
+	log.Println("\t\tcase sensitive     =", config.CaseSensitive)
 
 	rand.Seed(time.Now().UnixNano())
 
-	sm, err := sticker.NewManager(*resourcePathPtr)
+	sm, err := sticker.NewManager(*resourcePathPtr, sticker.CaseSensitive(config.CaseSensitive))
 	if err != nil {
 		log.Fatalln("Failed to collect the sticker info:", err)
 	}

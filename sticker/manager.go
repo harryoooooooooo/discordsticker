@@ -18,8 +18,9 @@ import (
 // Manager holds the cached sticker info.
 // Note that it's caller's responsibility to lock the resource.
 type Manager struct {
-	root     string
-	stickers []*Sticker
+	root          string
+	stickers      []*Sticker
+	caseSensitive bool
 
 	mu sync.RWMutex
 }
@@ -33,8 +34,19 @@ func (m *Manager) Stickers() []*Sticker {
 	return m.stickers
 }
 
-func NewManager(root string) (*Manager, error) {
+type ManagerOption func(m *Manager)
+
+func CaseSensitive(v bool) ManagerOption {
+	return func(m *Manager) {
+		m.caseSensitive = v
+	}
+}
+
+func NewManager(root string, opts ...ManagerOption) (*Manager, error) {
 	m := &Manager{root: filepath.Clean(root)}
+	for _, o := range opts {
+		o(m)
+	}
 	if err := m.update(); err != nil {
 		return nil, err
 	}
@@ -89,6 +101,9 @@ func (m *Manager) update() error {
 			name = name[1:]
 		}
 		name = strings.ReplaceAll(filepath.ToSlash(name), "/", "-")
+		if !m.caseSensitive {
+			name = strings.ToLower(name)
+		}
 
 		stickers[i] = &Sticker{
 			name: name,
@@ -172,6 +187,9 @@ func (m *Manager) AddSticker(name, url string) (retErr error) {
 		return UninformableErr
 	}
 
+	if !m.caseSensitive {
+		name = strings.ToLower(name)
+	}
 	m.stickers = append(m.stickers, &Sticker{
 		name: name,
 		path: path,
@@ -217,6 +235,9 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 		}
 	}()
 
+	if !m.caseSensitive {
+		dst = strings.ToLower(dst)
+	}
 	srcMatched[0].name = dst
 	srcMatched[0].path = dstPath
 	m.sortStickers()
@@ -241,6 +262,14 @@ func (m *Manager) MatchedStickers(patternGroups [][]string) []*Sticker {
 	}
 	if len(pgs) == 0 {
 		return m.stickers
+	}
+
+	if !m.caseSensitive {
+		for _, pg := range pgs {
+			for i, p := range pg {
+				pg[i] = strings.ToLower(p)
+			}
+		}
 	}
 
 	var ret []*Sticker
