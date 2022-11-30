@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +39,16 @@ func NewManager(root string) (*Manager, error) {
 		return nil, err
 	}
 	return m, nil
+}
+
+type stickerSliceSorter []*Sticker
+
+func (s stickerSliceSorter) Len() int           { return len(s) }
+func (s stickerSliceSorter) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s stickerSliceSorter) Less(i, j int) bool { return s[i].Name() < s[j].Name() }
+
+func (m *Manager) sortStickers() {
+	sort.Sort(stickerSliceSorter(m.stickers))
 }
 
 // update reads the structure of the stickers in the file system.
@@ -86,6 +97,7 @@ func (m *Manager) update() error {
 	}
 
 	m.stickers = stickers
+	m.sortStickers()
 
 	return nil
 }
@@ -164,6 +176,7 @@ func (m *Manager) AddSticker(name, url string) (retErr error) {
 		name: name,
 		path: path,
 	})
+	m.sortStickers()
 
 	return nil
 }
@@ -206,6 +219,7 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 
 	srcMatched[0].name = dst
 	srcMatched[0].path = dstPath
+	m.sortStickers()
 
 	return nil
 }
