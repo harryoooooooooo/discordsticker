@@ -609,22 +609,35 @@ func main() {
 				return
 			}
 			defer r.Close()
+
+			if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{Flags: discordgo.MessageFlagsEphemeral},
+			}); err != nil {
+				log.Println("Failed to send response:", err)
+				h.replyPrivate("Something goes wrong here! Please contact the admin.")
+				return
+			}
+			defer func() {
+				if err := s.InteractionResponseDelete(i.Interaction); err != nil {
+					log.Println("Failed to delete the deferred message:", err)
+				}
+			}()
+
 			ext := filepath.Ext(path)
+			files := []*discordgo.File{{
+				Name:        "sticker" + ext,
+				ContentType: "image/" + ext[1:],
+				Reader:      r,
+			}}
 			content := ""
 			if i.Member != nil {
 				content = i.Member.Mention() + " posted:"
 			}
-			if err := s.InteractionRespond(h.i.Interaction, &discordgo.InteractionResponse{
-				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Content: content,
-					Files: []*discordgo.File{{
-						Name:        "sticker" + ext,
-						ContentType: "image/" + ext[1:],
-						Reader:      r,
-					}},
-					AllowedMentions: &discordgo.MessageAllowedMentions{},
-				},
+			if _, err := s.ChannelMessageSendComplex(i.ChannelID, &discordgo.MessageSend{
+				Content:         content,
+				Files:           files,
+				AllowedMentions: &discordgo.MessageAllowedMentions{},
 			}); err != nil {
 				log.Println("Failed to post sticker:", err)
 				h.replyPrivate("Something goes wrong here! Please contact the admin.")
