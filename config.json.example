@@ -3,5 +3,18 @@
   "AppID": "",
   "CommandPrefix": "!!",
   "CoolDown": 5,
+  "CoolDownMessage": "Cooling down...",
+  "PerGuildConfig": [
+    {
+      "GuildID": "<sample-guild-id1>",
+      "CoolDown": 10,
+      "CoolDownMessage": "Cooling down! :laughing:"
+    },
+    {
+      "GuildID": "<sample-guild-id2>",
+      "CoolDown": 3,
+      "CoolDownMessage": "Please don't spam :rage:"
+    }
+  ],
   "CaseSensitive": false
 }
