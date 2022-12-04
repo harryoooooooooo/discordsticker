@@ -26,8 +26,44 @@ const maxMsgLen = 2000
 var (
 	// server configs
 	commandPrefix string
-	coolDown      time.Duration
 )
+
+type guildConfig struct {
+	coolDown        time.Duration
+	coolDownMessage string
+}
+
+type guildConfigManager struct {
+	defaultConfig  guildConfig
+	perGuildConfig map[string]guildConfig
+	cdCounter      *utils.CoolDownCounter
+}
+
+func newGuildConfigManager(defaultConfig guildConfig, perGuildConfig map[string]guildConfig) *guildConfigManager {
+	return &guildConfigManager{
+		defaultConfig:  defaultConfig,
+		perGuildConfig: perGuildConfig,
+		cdCounter:      utils.NewCoolDownCounter(),
+	}
+}
+
+func (gc *guildConfigManager) tryCoolDown(channelID, guildID string) (bool, string) {
+	if guildID == "" {
+		return true, ""
+	}
+	conf := gc.defaultConfig
+	if c, ok := gc.perGuildConfig[guildID]; ok {
+		conf = c
+	}
+	if conf.coolDown == 0 || gc.cdCounter.CoolDown(conf.coolDown, channelID) {
+		return true, ""
+	}
+	return false, conf.coolDownMessage
+}
+
+func (gc *guildConfigManager) removeCoolDown(channelID string) {
+	gc.cdCounter.RemoveCoolDown(channelID)
+}
 
 type handler interface {
 	postSticker(poster io.Reader, ext string) error
@@ -390,14 +426,21 @@ func main() {
 	}
 
 	config := struct {
-		Token         string
-		AppID         string
-		CommandPrefix string
-		CoolDown      int
-		CaseSensitive bool
+		Token           string
+		AppID           string
+		CommandPrefix   string
+		CoolDown        int
+		CoolDownMessage string
+		CaseSensitive   bool
+		PerGuildConfig  []struct {
+			GuildID         string
+			CoolDown        int
+			CoolDownMessage string
+		}
 	}{
-		CommandPrefix: "!!",
-		CoolDown:      5,
+		CommandPrefix:   "!!",
+		CoolDown:        5,
+		CoolDownMessage: "Cooling down...",
 	}
 	configBtyes, err := ioutil.ReadFile(*configFilePathPtr)
 	if err != nil {
@@ -408,7 +451,21 @@ func main() {
 	}
 
 	commandPrefix = config.CommandPrefix
-	coolDown = time.Duration(config.CoolDown) * time.Second
+
+	perGuildConfig := make(map[string]guildConfig)
+	for _, conf := range config.PerGuildConfig {
+		perGuildConfig[conf.GuildID] = guildConfig{
+			coolDown:        time.Duration(conf.CoolDown) * time.Second,
+			coolDownMessage: conf.CoolDownMessage,
+		}
+	}
+	gcMgr := newGuildConfigManager(
+		guildConfig{
+			coolDown:        time.Duration(config.CoolDown) * time.Second,
+			coolDownMessage: config.CoolDownMessage,
+		},
+		perGuildConfig,
+	)
 
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile | log.Lmsgprefix)
 
@@ -416,8 +473,8 @@ func main() {
 	log.Println("\tresource directory =", *resourcePathPtr)
 	log.Println("\tconfig file        =", *configFilePathPtr)
 	log.Println("\t\tcommand prefix     =", commandPrefix)
-	log.Println("\t\tcool down interval =", coolDown)
 	log.Println("\t\tcase sensitive     =", config.CaseSensitive)
+	log.Println("\t\tper guild config   =", perGuildConfig)
 
 	rand.Seed(time.Now().UnixNano())
 
@@ -430,8 +487,6 @@ func main() {
 	if err != nil {
 		log.Fatalln("Failed to create Discord session:", err)
 	}
-
-	cd := utils.NewCoolDownCounter()
 
 	s.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
 		// Ignore all messages created by the bot itself.
@@ -453,10 +508,10 @@ func main() {
 
 		// Non-command case.
 		if command[0] != '/' {
-			if coolDown == 0 || cd.CoolDown(coolDown, m.ChannelID) {
+			if succ, msg := gcMgr.tryCoolDown(m.ChannelID, m.GuildID); succ {
 				handlePost(h, sm, command, nil)
 			} else {
-				h.replyPublic("Cooling down.")
+				h.replyPublic(msg)
 			}
 			return
 		}
@@ -501,10 +556,10 @@ func main() {
 			}
 			handleRename(h, sm, args[0], args[1])
 		case "random":
-			if coolDown == 0 || cd.CoolDown(coolDown, m.ChannelID) {
+			if succ, msg := gcMgr.tryCoolDown(m.ChannelID, m.GuildID); succ {
 				handleRandom(h, sm, arg)
 			} else {
-				h.replyPublic("Cooling down.")
+				h.replyPublic(msg)
 			}
 		default:
 			panic("Should not go here")
@@ -545,14 +600,14 @@ func main() {
 			case "rename":
 				handleRename(h, sm, getOptionString("name"), getOptionString("new_name"))
 			case "random":
-				if coolDown == 0 || cd.CoolDown(coolDown, i.ChannelID) {
+				if succ, msg := gcMgr.tryCoolDown(i.ChannelID, i.GuildID); succ {
 					handleRandom(h, sm, getOptionString("patterns"))
 				} else {
-					h.replyPublic("Cooling down.")
+					h.replyPublic(msg)
 				}
 			case "post":
-				if coolDown != 0 && !cd.CoolDown(coolDown, i.ChannelID) {
-					h.replyPublic("Cooling down.")
+				if succ, msg := gcMgr.tryCoolDown(i.ChannelID, i.GuildID); !succ {
+					h.replyPublic(msg)
 					return
 				}
 				handlePost(h, sm, getOptionString("pattern"), func(ss []*sticker.Sticker) {
@@ -594,14 +649,14 @@ func main() {
 						}
 						h.reply(content, true, components)
 					}
-					cd.RemoveCoolDown(i.ChannelID)
+					gcMgr.removeCoolDown(i.ChannelID)
 				})
 			default:
 				panic("Should not go here")
 			}
 		case discordgo.InteractionMessageComponent:
-			if coolDown != 0 && !cd.CoolDown(coolDown, i.ChannelID) {
-				h.replyPrivate("Cooling down.")
+			if succ, msg := gcMgr.tryCoolDown(i.ChannelID, i.GuildID); !succ {
+				h.replyPrivate(msg)
 				return
 			}
 			path := i.MessageComponentData().CustomID
