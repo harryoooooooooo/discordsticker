@@ -389,12 +389,15 @@ func main() {
 		flag.PrintDefaults()
 	}
 
-	var config struct {
+	config := struct {
 		Token         string
 		AppID         string
 		CommandPrefix string
 		CoolDown      int
 		CaseSensitive bool
+	}{
+		CommandPrefix: "!!",
+		CoolDown:      5,
 	}
 	configBtyes, err := ioutil.ReadFile(*configFilePathPtr)
 	if err != nil {
