@@ -655,19 +655,6 @@ func main() {
 				panic("Should not go here")
 			}
 		case discordgo.InteractionMessageComponent:
-			if succ, msg := gcMgr.tryCoolDown(i.ChannelID, i.GuildID); !succ {
-				h.replyPrivate(msg)
-				return
-			}
-			path := i.MessageComponentData().CustomID
-			r, err := os.Open(path)
-			if err != nil {
-				log.Println("Failed to open the image:", err)
-				h.replyPrivate("Something goes wrong here! Please contact the admin.")
-				return
-			}
-			defer r.Close()
-
 			if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{Flags: discordgo.MessageFlagsEphemeral},
@@ -681,6 +668,33 @@ func main() {
 					log.Println("Failed to delete the deferred message:", err)
 				}
 			}()
+
+			// As long as we go here we've responded successfully once.
+			// The further responses shall be sent as followup message.
+			h.replied = true
+
+			if succ, msg := gcMgr.tryCoolDown(i.ChannelID, i.GuildID); !succ {
+				if i.Member != nil {
+					msg = i.Member.Mention() + " clicked button: " + msg
+				}
+				if _, err := s.ChannelMessageSendComplex(i.ChannelID, &discordgo.MessageSend{
+					Content:         msg,
+					AllowedMentions: &discordgo.MessageAllowedMentions{},
+				}); err != nil {
+					log.Println("Failed to sent cooling down message:", err)
+					h.replyPrivate("Something goes wrong here! Please contact the admin.")
+				}
+				return
+			}
+
+			path := i.MessageComponentData().CustomID
+			r, err := os.Open(path)
+			if err != nil {
+				log.Println("Failed to open the image:", err)
+				h.replyPrivate("Something goes wrong here! Please contact the admin.")
+				return
+			}
+			defer r.Close()
 
 			ext := filepath.Ext(path)
 			files := []*discordgo.File{{
