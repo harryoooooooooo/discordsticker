@@ -78,7 +78,15 @@ type messageHandler struct {
 
 // replyPublic sends message back to the channel from where we got the message.
 func (h *messageHandler) replyPublic(msg string) {
-	if _, err := h.s.ChannelMessageSend(h.m.ChannelID, msg); err != nil {
+	if _, err := h.s.ChannelMessageSendComplex(h.m.ChannelID, &discordgo.MessageSend{
+		Content: msg,
+		Reference: &discordgo.MessageReference{
+			MessageID: h.m.ID,
+			ChannelID: h.m.ChannelID,
+			GuildID:   h.m.GuildID,
+		},
+		AllowedMentions: &discordgo.MessageAllowedMentions{},
+	}); err != nil {
 		log.Println("Failed to reply:", err)
 	}
 }
@@ -95,11 +103,7 @@ func (h *messageHandler) replyPrivate(msg string) {
 	}
 
 	// Got command from guild but we replies with DM. The function informs guild on failure.
-	informFailure := func() {
-		if _, err := h.s.ChannelMessageSend(h.m.ChannelID, "Failed to send you a DM!"); err != nil {
-			log.Println("Failed to inform failure to guild:", err)
-		}
-	}
+	informFailure := func() { h.replyPublic("Failed to send you a DM!") }
 
 	userChannel, err := h.s.UserChannelCreate(h.m.Author.ID)
 	if err != nil {
@@ -112,13 +116,23 @@ func (h *messageHandler) replyPrivate(msg string) {
 		informFailure()
 		return
 	}
-	if _, err := h.s.ChannelMessageSend(h.m.ChannelID, "Direct message is sent!"); err != nil {
-		log.Println("Failed to send done message to guild:", err)
-	}
+	h.replyPublic("Direct message is sent!")
 }
 
 func (h *messageHandler) postSticker(r io.Reader, ext string) error {
-	_, err := h.s.ChannelFileSend(h.m.ChannelID, "sticker"+ext, r)
+	_, err := h.s.ChannelMessageSendComplex(h.m.ChannelID, &discordgo.MessageSend{
+		Files: []*discordgo.File{{
+			Name:        "sticker" + ext,
+			ContentType: "image/" + ext[1:],
+			Reader:      r,
+		}},
+		Reference: &discordgo.MessageReference{
+			MessageID: h.m.ID,
+			ChannelID: h.m.ChannelID,
+			GuildID:   h.m.GuildID,
+		},
+		AllowedMentions: &discordgo.MessageAllowedMentions{},
+	})
 	return err
 }
 
