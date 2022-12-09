@@ -63,6 +63,20 @@ func (m *Manager) sortStickers() {
 	sort.Sort(stickerSliceSorter(m.stickers))
 }
 
+// insertSticker inserts the stickers while assuming m.stickers is sorted.
+func (m *Manager) insertSticker(s *Sticker) {
+	i, found := sort.Find(len(m.stickers), func(i int) int {
+		return strings.Compare(s.Name(), m.stickers[i].Name())
+	})
+	if found {
+		log.Printf("Tried to insert an already existing sticker %q, skipped", s.Name())
+		return
+	}
+	m.stickers = append(m.stickers, nil)
+	copy(m.stickers[i+1:], m.stickers[i:])
+	m.stickers[i] = s
+}
+
 // update reads the structure of the stickers in the file system.
 // Under the root directory, this function walks recursively into every directory,
 // and treats all found png, jpeg, and gif files as stickers.
@@ -209,11 +223,10 @@ func (m *Manager) AddSticker(name, url string) (retErr error) {
 	if !m.caseSensitive {
 		name = strings.ToLower(name)
 	}
-	m.stickers = append(m.stickers, &Sticker{
+	m.insertSticker(&Sticker{
 		name: name,
 		path: path,
 	})
-	m.sortStickers()
 
 	return nil
 }
@@ -270,7 +283,15 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 	}
 	srcMatched[0].name = dst
 	srcMatched[0].path = dstPath
-	m.sortStickers()
+
+	for i, s := range m.stickers {
+		if s == srcMatched[0] {
+			copy(m.stickers[i:], m.stickers[i+1:])
+			m.stickers = m.stickers[:len(m.stickers)-1]
+			break
+		}
+	}
+	m.insertSticker(srcMatched[0])
 
 	return nil
 }
