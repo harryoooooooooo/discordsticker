@@ -111,6 +111,21 @@ func (m *Manager) update() error {
 		}
 	}
 
+	failureMsg := ""
+	for i, s1 := range stickers {
+		for _, s2 := range stickers[i+1:] {
+			if strings.Contains(s1.Name(), s2.Name()) {
+				failureMsg += fmt.Sprintf(", %q contains %q", s1.Name(), s2.Name())
+			}
+			if strings.Contains(s2.Name(), s1.Name()) {
+				failureMsg += fmt.Sprintf(", %q contains %q", s2.Name(), s1.Name())
+			}
+		}
+	}
+	if failureMsg != "" {
+		return errors.New("Found conflicted sticker names" + failureMsg)
+	}
+
 	m.stickers = stickers
 	m.sortStickers()
 
@@ -136,6 +151,10 @@ func (m *Manager) AddSticker(name, url string) (retErr error) {
 	if ss := m.MatchedStickers([][]string{{name}}); len(ss) != 0 {
 		matchedStr := StickerListString(ss)
 		return errors.New("The name is contained by the following stickers: " + matchedStr)
+	}
+	if ss := m.containedStickers(name); len(ss) != 0 {
+		matchedStr := StickerListString(ss)
+		return errors.New("The name contains the following stickers: " + matchedStr)
 	}
 
 	resp, err := http.Head(url)
@@ -220,6 +239,17 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 	if len(dstMatched) > 1 || (len(dstMatched) == 1 && dstMatched[0] != srcMatched[0]) {
 		return errors.New("The new name is contained by existing stickers: " + StickerListString(dstMatched))
 	}
+	if ss := m.containedStickers(dst); len(ss) != 0 {
+		for i, s := range ss {
+			if s == srcMatched[0] {
+				copy(ss[i:], ss[i+1:])
+				ss = ss[:len(ss)-1]
+				break
+			}
+		}
+		matchedStr := StickerListString(ss)
+		return errors.New("The name contains the following stickers: " + matchedStr)
+	}
 
 	srcPath := srcMatched[0].Path()
 	dstPath := filepath.Join(m.root, dst+srcMatched[0].Ext())
@@ -286,6 +316,16 @@ func (m *Manager) MatchedStickers(patternGroups [][]string) []*Sticker {
 				ret = append(ret, s)
 				break
 			}
+		}
+	}
+	return ret
+}
+
+func (m *Manager) containedStickers(name string) []*Sticker {
+	var ret []*Sticker
+	for _, s := range m.stickers {
+		if strings.Contains(name, s.Name()) {
+			ret = append(ret, s)
 		}
 	}
 	return ret
