@@ -260,8 +260,10 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 				break
 			}
 		}
-		matchedStr := StickerListString(ss)
-		return errors.New("The name contains the following stickers: " + matchedStr)
+		if len(ss) != 0 {
+			matchedStr := StickerListString(ss)
+			return errors.New("The name contains the following stickers: " + matchedStr)
+		}
 	}
 
 	srcPath := srcMatched[0].Path()
