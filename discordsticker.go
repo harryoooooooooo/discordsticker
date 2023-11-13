@@ -66,6 +66,7 @@ func (gc *guildConfigManager) removeCoolDown(channelID string) {
 }
 
 type handler interface {
+	userInfo() string
 	postSticker(poster io.Reader, ext string) error
 	replyPrivate(msg string)
 	replyPublic(msg string)
@@ -74,6 +75,14 @@ type handler interface {
 type messageHandler struct {
 	s *discordgo.Session
 	m *discordgo.MessageCreate
+}
+
+func (h *messageHandler) userInfo() string {
+	u := h.m.Author
+	if u == nil {
+		return "[Empty User]"
+	}
+	return fmt.Sprintf("[User: ID=%s, Name=%s]", u.ID, u.String())
 }
 
 // replyPublic sends message back to the channel from where we got the message.
@@ -140,6 +149,14 @@ type commandHandler struct {
 	s       *discordgo.Session
 	i       *discordgo.InteractionCreate
 	replied bool
+}
+
+func (h *commandHandler) userInfo() string {
+	u := h.i.User
+	if u == nil {
+		u = h.i.Member.User
+	}
+	return fmt.Sprintf("[User: ID=%s, Name=%s]", u.ID, u.String())
 }
 
 func (h *commandHandler) reply(msg string, ephemeral bool, components []discordgo.MessageComponent) {
@@ -289,6 +306,8 @@ func handleAdd(h handler, sm *sticker.Manager, name, url string) {
 		}
 		return
 	}
+
+	log.Printf("%s `add` %q %q", h.userInfo(), name, url)
 	h.replyPublic(fmt.Sprintf("Done. Added sticker: `%s`", name))
 }
 
@@ -304,6 +323,8 @@ func handleRename(h handler, sm *sticker.Manager, name, newName string) {
 		}
 		return
 	}
+
+	log.Printf("%s `rename` %q %q", h.userInfo(), name, newName)
 	h.replyPublic(fmt.Sprintf("Done. Renamed sticker: `%s` -> `%s`", name, newName))
 }
 
