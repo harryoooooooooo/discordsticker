@@ -159,11 +159,11 @@ func (m *Manager) AddSticker(name, url string) (retErr error) {
 
 	if ss := m.MatchedStickers([][]string{{name}}); len(ss) != 0 {
 		matchedStr := StickerListString(ss)
-		return errors.New("The name is contained by the following stickers: " + matchedStr)
+		return errors.New("The name is contained by the following sticker(s): " + matchedStr)
 	}
 	if ss := m.containedStickers(name); len(ss) != 0 {
 		matchedStr := StickerListString(ss)
-		return errors.New("The name contains the following stickers: " + matchedStr)
+		return errors.New("The name contains the following sticker(s): " + matchedStr)
 	}
 
 	resp, err := http.Head(url)
@@ -245,7 +245,7 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 
 	dstMatched := m.MatchedStickers([][]string{{dst}})
 	if len(dstMatched) > 1 || (len(dstMatched) == 1 && dstMatched[0] != srcMatched[0]) {
-		return errors.New("The new name is contained by existing stickers: " + StickerListString(dstMatched))
+		return errors.New("The new name is contained by existing sticker(s): " + StickerListString(dstMatched))
 	}
 	if ss := m.containedStickers(dst); len(ss) != 0 {
 		for i, s := range ss {
@@ -257,7 +257,7 @@ func (m *Manager) RenameSticker(src, dst string) (retErr error) {
 		}
 		if len(ss) != 0 {
 			matchedStr := StickerListString(ss)
-			return errors.New("The name contains the following stickers: " + matchedStr)
+			return errors.New("The name contains the following sticker(s): " + matchedStr)
 		}
 	}
 
@@ -341,6 +341,9 @@ func (m *Manager) MatchedStickers(patternGroups [][]string) []*Sticker {
 
 func (m *Manager) containedStickers(name string) []*Sticker {
 	var ret []*Sticker
+	if !m.caseSensitive {
+		name = strings.ToLower(name)
+	}
 	for _, s := range m.stickers {
 		if strings.Contains(name, s.Name()) {
 			ret = append(ret, s)
