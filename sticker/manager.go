@@ -47,7 +47,7 @@ func NewManager(root string, opts ...ManagerOption) (*Manager, error) {
 	for _, o := range opts {
 		o(m)
 	}
-	if err := m.update(); err != nil {
+	if err := m.loadStickers(); err != nil {
 		return nil, err
 	}
 	return m, nil
@@ -77,12 +77,11 @@ func (m *Manager) insertSticker(s *Sticker) {
 	m.stickers[i] = s
 }
 
-// update reads the structure of the stickers in the file system.
+// loadStickers reads the structure of the stickers in the file system.
 // Under the root directory, this function walks recursively into every directory,
 // and treats all found png, jpeg, and gif files as stickers.
 // The filepath separator in the sticker names will be replaced by '-'.
-// update may returns countUniqLenError if there are conflicted sticker names.
-func (m *Manager) update() error {
+func (m *Manager) loadStickers() error {
 	var paths []string
 
 	if err := filepath.WalkDir(m.root, func(path string, d fs.DirEntry, err error) error {
@@ -125,19 +124,15 @@ func (m *Manager) update() error {
 		}
 	}
 
-	failureMsg := ""
 	for i, s1 := range stickers {
 		for _, s2 := range stickers[i+1:] {
 			if strings.Contains(s1.Name(), s2.Name()) {
-				failureMsg += fmt.Sprintf(", %q contains %q", s1.Name(), s2.Name())
+				log.Printf("Found sticker %q contains %q", s1.Path(), s2.Path())
 			}
 			if strings.Contains(s2.Name(), s1.Name()) {
-				failureMsg += fmt.Sprintf(", %q contains %q", s2.Name(), s1.Name())
+				log.Printf("Found sticker %q contains %q", s2.Path(), s1.Path())
 			}
 		}
-	}
-	if failureMsg != "" {
-		return errors.New("Found conflicted sticker names" + failureMsg)
 	}
 
 	m.stickers = stickers
