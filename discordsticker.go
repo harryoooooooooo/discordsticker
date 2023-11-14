@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"discordsticker/sticker"
 	"discordsticker/utils"
@@ -311,6 +312,23 @@ func handleAdd(h handler, sm *sticker.Manager, name, url string) {
 	h.replyPublic(fmt.Sprintf("Done. Added sticker: `%s`", name))
 }
 
+func handleAddText(h handler, sm *sticker.Manager, name, text string) {
+	sm.Lock()
+	defer sm.Unlock()
+
+	if err := sm.AddText(name, text); err != nil {
+		if err != sticker.UninformableErr {
+			h.replyPublic(err.Error())
+		} else {
+			h.replyPublic("Something goes wrong here! Please contact the admin.")
+		}
+		return
+	}
+
+	log.Printf("%s `add` %q %q", h.userInfo(), name, text)
+	h.replyPublic(fmt.Sprintf("Done. Added text: `%s`", name))
+}
+
 func handleRename(h handler, sm *sticker.Manager, name, newName string) {
 	sm.Lock()
 	defer sm.Unlock()
@@ -328,6 +346,33 @@ func handleRename(h handler, sm *sticker.Manager, name, newName string) {
 	h.replyPublic(fmt.Sprintf("Done. Renamed sticker: `%s` -> `%s`", name, newName))
 }
 
+func doPost(h handler, s *sticker.Sticker) {
+	if s.Ext() == ".txt" {
+		text, err := os.ReadFile(s.Path())
+		if err != nil {
+			log.Println("Failed to read the text:", err)
+			h.replyPublic("Something goes wrong here! Please contact the admin.")
+		} else {
+			h.replyPublic(string(text))
+		}
+		return
+	}
+
+	r, err := os.Open(s.Path())
+	if err != nil {
+		log.Println("Failed to open the image:", err)
+		h.replyPublic("Something goes wrong here! Please contact the admin.")
+		return
+	}
+	defer r.Close()
+
+	if err := h.postSticker(r, s.Ext()); err != nil {
+		log.Println("Failed to post sticker:", err)
+		h.replyPublic("Something goes wrong here! Please contact the admin.")
+		return
+	}
+}
+
 func handleRandom(h handler, sm *sticker.Manager, patterns string) {
 	sm.RLock()
 	defer sm.RUnlock()
@@ -339,21 +384,7 @@ func handleRandom(h handler, sm *sticker.Manager, patterns string) {
 		return
 	}
 
-	sticker := stickers[rand.Intn(len(stickers))]
-
-	r, err := os.Open(sticker.Path())
-	if err != nil {
-		log.Println("Failed to open the image:", err)
-		h.replyPublic("Something goes wrong here! Please contact the admin.")
-		return
-	}
-	defer r.Close()
-
-	if err := h.postSticker(r, sticker.Ext()); err != nil {
-		log.Println("Failed to post sticker:", err)
-		h.replyPublic("Something goes wrong here! Please contact the admin.")
-		return
-	}
+	doPost(h, stickers[rand.Intn(len(stickers))])
 }
 
 func handlePost(h handler, sm *sticker.Manager, pattern string, handleMulti func([]*sticker.Sticker)) {
@@ -381,19 +412,7 @@ func handlePost(h handler, sm *sticker.Manager, pattern string, handleMulti func
 		return
 	}
 
-	r, err := os.Open(stickers[0].Path())
-	if err != nil {
-		log.Println("Failed to open the image:", err)
-		h.replyPublic("Something goes wrong here! Please contact the admin.")
-		return
-	}
-	defer r.Close()
-
-	if err := h.postSticker(r, stickers[0].Ext()); err != nil {
-		log.Println("Failed to post sticker:", err)
-		h.replyPublic("Something goes wrong here! Please contact the admin.")
-		return
-	}
+	doPost(h, stickers[0])
 }
 
 func handleHelp(h handler, appCommand bool) {
@@ -417,6 +436,9 @@ func handleHelp(h handler, appCommand bool) {
 	}, {
 		"add", "<sticker_name> <URL>",
 		"Download and save the image at `<URL>` as a new sticker.",
+	}, {
+		"txt-add", "<sticker_name> <text>",
+		"Add a new plain-text sticker. Can be used for bypassing the image size limit by simply posting an URL.",
 	}, {
 		"rename", "<sticker_name> <new_sticker_name>",
 		"Move the sticker on `<sticker_name>` to `<new_sticker_name>`.",
@@ -554,7 +576,7 @@ func main() {
 		command, arg, _ := strings.Cut(command[1:], " ")
 
 		var matchedCommands []string
-		for _, comm := range []string{"help", "list", "add", "rename", "random"} {
+		for _, comm := range []string{"help", "list", "add", "txt-add", "rename", "random"} {
 			if strings.HasPrefix(comm, command) {
 				matchedCommands = append(matchedCommands, comm)
 			}
@@ -583,6 +605,22 @@ func main() {
 				return
 			}
 			handleAdd(h, sm, args[0], args[1])
+		case "txt-add":
+			arg = strings.TrimSpace(arg)
+			var name, text string
+			for i, r := range arg {
+				if unicode.IsSpace(r) {
+					name = string(arg[:i])
+					text = strings.TrimSpace(string(arg[i+1:]))
+					break
+				}
+			}
+			if name == "" || text == "" {
+				h.replyPublic("Invalid format. Expect `" + commandPrefix + "/txt-add <sticker_name> <text>`.")
+				return
+			}
+			text = strings.TrimSpace(text)
+			handleAddText(h, sm, name, text)
 		case "rename":
 			args := strings.Fields(arg)
 			if len(args) != 2 {
@@ -632,6 +670,8 @@ func main() {
 				handleList(h, sm, getOptionString("patterns"))
 			case "add":
 				handleAdd(h, sm, getOptionString("name"), getOptionString("url"))
+			case "txt-add":
+				handleAddText(h, sm, getOptionString("name"), strings.TrimSpace(getOptionString("text")))
 			case "rename":
 				handleRename(h, sm, getOptionString("name"), getOptionString("new_name"))
 			case "random":
@@ -723,6 +763,30 @@ func main() {
 			}
 
 			path := i.MessageComponentData().CustomID
+			ext := filepath.Ext(path)
+			content := ""
+			if i.Member != nil {
+				content = i.Member.Mention() + " posted:"
+			}
+
+			if ext == ".txt" {
+				text, err := os.ReadFile(path)
+				if err != nil {
+					log.Println("Failed to read the text:", err)
+					h.replyPrivate("Something goes wrong here! Please contact the admin.")
+					return
+				}
+				content = content + "\n" + string(text)
+				if _, err := s.ChannelMessageSendComplex(i.ChannelID, &discordgo.MessageSend{
+					Content:         content,
+					AllowedMentions: &discordgo.MessageAllowedMentions{},
+				}); err != nil {
+					log.Println("Failed to post text:", err)
+					h.replyPrivate("Something goes wrong here! Please contact the admin.")
+				}
+				return
+			}
+
 			r, err := os.Open(path)
 			if err != nil {
 				log.Println("Failed to open the image:", err)
@@ -730,17 +794,11 @@ func main() {
 				return
 			}
 			defer r.Close()
-
-			ext := filepath.Ext(path)
 			files := []*discordgo.File{{
 				Name:        "sticker" + ext,
 				ContentType: "image/" + ext[1:],
 				Reader:      r,
 			}}
-			content := ""
-			if i.Member != nil {
-				content = i.Member.Mention() + " posted:"
-			}
 			if _, err := s.ChannelMessageSendComplex(i.ChannelID, &discordgo.MessageSend{
 				Content:         content,
 				Files:           files,
@@ -794,6 +852,21 @@ func main() {
 				Name:        "url",
 				Required:    true,
 				Description: "A link to download the sticker",
+			}},
+		}, {
+			Type:        discordgo.ApplicationCommandOptionSubCommand,
+			Name:        "txt-add",
+			Description: "Add a new text",
+			Options: []*discordgo.ApplicationCommandOption{{
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "name",
+				Required:    true,
+				Description: "Sticker name",
+			}, {
+				Type:        discordgo.ApplicationCommandOptionString,
+				Name:        "text",
+				Required:    true,
+				Description: "The text content",
 			}},
 		}, {
 			Type:        discordgo.ApplicationCommandOptionSubCommand,
