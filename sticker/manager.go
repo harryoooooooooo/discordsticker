@@ -226,6 +226,49 @@ func (m *Manager) AddSticker(name, url string) (retErr error) {
 	return nil
 }
 
+const maxTextLen = 1350
+
+// AddText adds a new plain-text sticker and updates the sticker data.
+// UninformableErr is returned when there is an internal error occurs;
+// Otherwise there is probably an error caused by user and the error object may cantain advice if any.
+func (m *Manager) AddText(name, text string) (retErr error) {
+	if strings.Contains(filepath.ToSlash(name), "/") {
+		return errors.New(fmt.Sprintf("Invalid sticker name, filepath separator (%c) or slash is included", filepath.Separator))
+	}
+
+	if ss := m.MatchedStickers([][]string{{name}}); len(ss) != 0 {
+		matchedStr := StickerListString(ss)
+		return errors.New("The name is contained by the following sticker(s): " + matchedStr)
+	}
+	if ss := m.containedStickers(name); len(ss) != 0 {
+		matchedStr := StickerListString(ss)
+		return errors.New("The name contains the following sticker(s): " + matchedStr)
+	}
+
+	if len(text) > maxTextLen {
+		return errors.New(fmt.Sprintf("Maximum text length exceeded: got %d, want <= %d", len(text), maxTextLen))
+	}
+
+	path := filepath.Join(m.root, name+".txt")
+	if err := os.WriteFile(path, []byte(text), 0644); err != nil {
+		log.Println("Failed to write file:", err)
+		if err := os.Remove(path); err != nil {
+			log.Println("Failed to remove file:", err)
+		}
+		return UninformableErr
+	}
+
+	if !m.caseSensitive {
+		name = strings.ToLower(name)
+	}
+	m.insertSticker(&Sticker{
+		name: name,
+		path: path,
+	})
+
+	return nil
+}
+
 // RenameSticker renames the sticker.
 // UninformableErr is returned when there is an internal error occurs;
 // Otherwise there is probably an error caused by user and the error object may cantain advice if any.
