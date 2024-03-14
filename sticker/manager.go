@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -173,12 +174,11 @@ func (m *Manager) AddSticker(name, url string) (retErr error) {
 	}
 
 	ctype := resp.Header.Get("Content-Type")
-	switch ctype {
-	case "image/png", "image/jpeg", "image/gif":
-		// Valid types. Nothing to do.
-	default:
-		return errors.New("Invalid URL content type. Only png, jpeg, and gif are supported.")
+	supportedCtype := []string{"image/png", "image/jpeg", "image/gif", "image/webp"}
+	if !slices.Contains(supportedCtype, ctype) {
+		return errors.New(fmt.Sprintf("Invalid URL content type `%s`. Only `%s` are supported.", ctype, strings.Join(supportedCtype, "`, `")))
 	}
+	ext := ctype[len("image/"):]
 
 	size, err := strconv.Atoi(resp.Header.Get("Content-Length"))
 	if err != nil {
@@ -196,7 +196,6 @@ func (m *Manager) AddSticker(name, url string) (retErr error) {
 	}
 	defer resp.Body.Close()
 
-	ext := ctype[len("image/"):]
 	path := filepath.Join(m.root, name+"."+ext)
 	w, err := os.Create(path)
 	if err != nil {
